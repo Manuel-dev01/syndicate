@@ -1,0 +1,89 @@
+-- | PrivacyTest — the privacy partition is a TEST TARGET, not a hope (CLAUDE.md §7).
+--
+-- This script forms a $100M facility with three lenders, then asserts the core privacy
+-- guarantee from several angles:
+--   * Each lender sees ONLY its own LenderPosition (Lender A has zero trace of B or C).
+--   * Lenders cannot see the shared Facility spine at all.
+--   * The Borrower sees the Facility but NONE of the per-lender positions.
+--   * The Agent Bank — co-signer of every position — is the one legitimate aggregator.
+module Syndicate.Tests.PrivacyTest where
+
+import Daml.Script
+import DA.Date (date, Month(..))
+import DA.List (sort)
+
+import Syndicate.Roles
+import Syndicate.Facility
+import Syndicate.Lender
+
+-- | Helper: create a lender's position, signed by the lender + agent bank.
+setupPosition :
+  AgentBank -> Text -> Lender -> Decimal -> Script (ContractId LenderPosition)
+setupPosition agentBank facilityId lender commitment =
+  submitMulti [lender, agentBank] [] $
+    createCmd LenderPosition with
+      facilityId
+      lender
+      agentBank
+      commitment
+      drawn = 0.0
+      accruedInterest = 0.0
+      currency = "USD"
+      interestRateBps = 850
+      maturityDate = date 2029 Jun 30
+
+testPrivacyPartition : Script ()
+testPrivacyPartition = do
+  borrower  <- allocateParty "Borrower"
+  agentBank <- allocateParty "AgentBank"
+  lenderA   <- allocateParty "LenderA"
+  lenderB   <- allocateParty "LenderB"
+  lenderC   <- allocateParty "LenderC"
+
+  -- Syndicate formation: the shared spine (borrower + agent bank), no per-lender data.
+  facCid <- submitMulti [borrower, agentBank] [] $
+    createCmd Facility with
+      facilityId = "FAC-2026-001"
+      borrower
+      agentBank
+      totalCommitment = 100000000.0
+      currency = "USD"
+      interestRateBps = 850
+      maturityDate = date 2029 Jun 30
+
+  -- Three lenders take pro-rata commitments, each in its OWN contract.
+  posA <- setupPosition agentBank "FAC-2026-001" lenderA 40000000.0
+  posB <- setupPosition agentBank "FAC-2026-001" lenderB 35000000.0
+  posC <- setupPosition agentBank "FAC-2026-001" lenderC 25000000.0
+
+  -- ---- The privacy proof -------------------------------------------------------------
+
+  -- Lender A sees exactly ONE position: its own. Zero trace of B or C.
+  aPositions <- map fst <$> query @LenderPosition lenderA
+  assertMsg "Lender A must see its OWN position" (posA `elem` aPositions)
+  assertMsg "Lender A must NOT see Lender B's position" (posB `notElem` aPositions)
+  assertMsg "Lender A must NOT see Lender C's position" (posC `notElem` aPositions)
+  assertMsg "Lender A must see exactly one position (its own)" (length aPositions == 1)
+
+  -- Symmetric check for Lender B.
+  bPositions <- map fst <$> query @LenderPosition lenderB
+  assertMsg "Lender B must see its OWN position" (posB `elem` bPositions)
+  assertMsg "Lender B must NOT see Lender A's position" (posA `notElem` bPositions)
+  assertMsg "Lender B must NOT see Lender C's position" (posC `notElem` bPositions)
+
+  -- Lenders cannot even see the shared Facility spine (strongest partition).
+  aFacilities <- query @Facility lenderA
+  assertMsg "Lender A must NOT see the shared Facility" (null aFacilities)
+
+  -- The Borrower sees the Facility but NONE of the per-lender positions.
+  borrowerFacilities <- map fst <$> query @Facility borrower
+  assertMsg "Borrower must see the Facility" (facCid `elem` borrowerFacilities)
+  borrowerPositions <- query @LenderPosition borrower
+  assertMsg "Borrower must NOT see any LenderPosition" (null borrowerPositions)
+
+  -- The Agent Bank is the one legitimate aggregator: it co-signs every position.
+  agentPositions <- map fst <$> query @LenderPosition agentBank
+  assertMsg "Agent Bank must see all three positions"
+    (sort agentPositions == sort [posA, posB, posC])
+
+  pure ()

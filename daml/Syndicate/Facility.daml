@@ -1,0 +1,44 @@
+-- | The Facility — the shared spine of a syndicated loan.
+--
+-- This is the single contract that anchors the deal. It deliberately carries ONLY
+-- facility-level terms (size, currency, rate, maturity). It does NOT carry a list of
+-- lenders or any per-lender amounts: that data lives in separate `LenderPosition`
+-- contracts (see Syndicate.Lender) so that no lender can read another lender's slice.
+module Syndicate.Facility where
+
+import Syndicate.Roles
+
+-- | Facility — the shared, facility-level terms of the loan.
+--
+-- SIGNATORY: borrower, agentBank
+--   Both must agree to stand the facility up; both attest its terms. They are the only
+--   parties who can change facility-level state.
+-- OBSERVER: (none beyond the signatories)
+--   No lender is an observer of the Facility. This is intentional and is the strongest
+--   form of the privacy partition: a lender's *only* window into the deal is its own
+--   `LenderPosition`, which embeds the facility terms it is entitled to. Because lenders
+--   never co-observe a shared contract, Lender A has ZERO on-ledger trace of Lender B —
+--   not its position, not even its membership.
+-- VISIBILITY CHECK: The Facility holds no per-lender breakdown and no lender stakeholders,
+--   so seeing it reveals nothing about any individual lender. Only the borrower and the
+--   agent bank can see it, and that is correct — they are the deal's two coordinating poles.
+template Facility
+  with
+    facilityId : Text
+    borrower : Borrower
+    agentBank : AgentBank
+    -- | Aggregate committed size of the whole facility (in `currency`).
+    totalCommitment : Decimal
+    currency : Text
+    -- | Annual interest rate in basis points (e.g. 850 = 8.50%). Integer bps avoids
+    -- floating-point rate ambiguity.
+    interestRateBps : Int
+    maturityDate : Date
+  where
+    signatory borrower, agentBank
+    -- No observers: per-lender data is partitioned into LenderPosition contracts.
+
+    ensure totalCommitment > 0.0
+        && interestRateBps >= 0
+        && currency /= ""
+        && facilityId /= ""

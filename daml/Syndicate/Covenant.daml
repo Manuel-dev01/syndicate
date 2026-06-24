@@ -1,0 +1,10 @@
+-- | Covenant.daml — covenant definitions + the monitoring contract the Co-Pilot reads.
+--
+-- Implemented in Phase 4. Empty-but-valid for now.
+--
+-- Design intent (CLAUDE.md §5): a `CovenantMonitor` contract readable need-to-know by the
+-- agent bank / co-pilot party. The borrower's underlying financials are disclosed to the
+-- agent bank and co-pilot only — never wholesale to lenders. The co-pilot reasons over this
+-- private data and proposes a typed Daml choice; it can execute only what its party is
+-- authorized to (see Syndicate.Roles.AgentAuthorization).
+module Syndicate.Covenant where

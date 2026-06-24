@@ -1,0 +1,49 @@
+-- | Roles & onboarding for the Syndicate facility.
+--
+-- This module defines the parties that participate in a facility and the on-ledger
+-- authorization that lets the Agent-Bank Co-Pilot (a separate Daml party) act on a
+-- need-to-know basis. Parties themselves are plain `Party` values; authority is granted
+-- explicitly through contracts so the *ledger* — never a prompt — is the guardrail.
+module Syndicate.Roles where
+
+-- | The five logical roles in a syndicated facility. These are convenience aliases over
+-- `Party`; they carry no authority on their own — authority comes from being a signatory
+-- or controller of a contract.
+type Borrower  = Party
+type AgentBank = Party
+type Lender    = Party
+-- | The LLM co-pilot's *own* Daml party. It is distinct from the AgentBank's human desk
+-- and is only ever granted scoped, revocable authority via `AgentAuthorization`.
+type AgentParty = Party
+
+-- | AgentAuthorization — the on-ledger grant that bounds what the co-pilot may do.
+--
+-- SIGNATORY: agentBank
+--   The agent bank is the sole signatory: it is the party whose authority is being
+--   delegated, so only it can create (or archive) the grant. Nothing the co-pilot does
+--   can manufacture this authority for itself.
+-- OBSERVER: agent (the co-pilot's party)
+--   The co-pilot can *see* the grant (so its service knows its scope) but cannot *alter*
+--   it — it is not a signatory.
+-- VISIBILITY CHECK: No borrower or lender data is carried here, and no lender is a
+--   stakeholder, so this contract leaks nothing about any lender's position. The only
+--   parties who can see it are the agent bank and the co-pilot it authorizes.
+template AgentAuthorization
+  with
+    agentBank : AgentBank
+    agent : AgentParty
+    -- | Human-readable description of the need-to-know scope (e.g. "read covenant +
+    -- borrower financials; propose drawdown settlement"). The real enforcement is the
+    -- set of choices the agent party actually controls on-ledger; this field documents
+    -- intent for auditors.
+    scope : Text
+  where
+    signatory agentBank
+    observer agent
+    ensure scope /= ""
+
+    -- | The agent bank can revoke the grant at any time. After this, the co-pilot's party
+    -- retains only whatever authority other live contracts still give it.
+    choice Revoke : ()
+      controller agentBank
+      do pure ()

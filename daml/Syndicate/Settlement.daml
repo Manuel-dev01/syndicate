@@ -1,0 +1,8 @@
+-- | Settlement.daml — atomic DvP-style settlement choices.
+--
+-- Implemented across Phase 2 (drawdown, interest accrual, repayment) and Phase 3
+-- (secondary lender-to-lender trade). Empty-but-valid for now.
+--
+-- Design intent (CLAUDE.md §1.2, §4): every settlement moves the cash leg AND the
+-- position leg in a SINGLE Daml transaction or not at all. Never two commits.
+module Syndicate.Settlement where

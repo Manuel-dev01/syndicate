@@ -1,0 +1,59 @@
+-- | LenderPosition — one contract per lender. THE privacy partition.
+--
+-- Each lender's commitment, funded (drawn) amount, and accrued interest live in a
+-- contract whose only stakeholders are that lender and the agent bank. No other lender
+-- is a signatory or observer, so Lender A literally cannot fetch, query, or observe
+-- Lender B's position. This per-lender partition is the single most important design
+-- decision in the repository (CLAUDE.md §4).
+module Syndicate.Lender where
+
+import Syndicate.Roles
+
+-- | LenderPosition — one lender's slice of a shared facility.
+--
+-- SIGNATORY: lender, agentBank
+--   The lender owns its slice; the agent bank co-signs because it is the facility's
+--   coordinating party and must be able to settle against this position atomically.
+-- OBSERVER: (none — explicitly NO other lender)
+--   Adding any other lender as an observer here would break the entire privacy model.
+--   Do not do it "for UI convenience" (CLAUDE.md §9). The lender's own UI reads this
+--   contract directly; the agent bank aggregates across positions it co-signs.
+-- VISIBILITY CHECK: The only parties who can see a LenderPosition are its `lender` and
+--   the `agentBank`. Lender A is neither a signatory nor an observer of Lender B's
+--   position, so it cannot see B's commitment, drawn amount, or accrued interest.
+--
+-- Facility terms (currency, rate, maturity) are SNAPSHOTTED here rather than read from the
+-- Facility, precisely because lenders are not observers of the Facility. The agent bank is
+-- a signatory of both, so it attests the snapshot is faithful.
+template LenderPosition
+  with
+    facilityId : Text
+    lender : Lender
+    agentBank : AgentBank
+    -- | This lender's committed amount (its share of the facility).
+    commitment : Decimal
+    -- | Amount funded so far against this commitment. Starts at 0; moves only via atomic
+    -- settlement choices (Phase 2). Invariant: 0 <= drawn <= commitment.
+    drawn : Decimal
+    -- | Interest accrued to this lender on its drawn balance, not yet repaid.
+    accruedInterest : Decimal
+    -- Snapshot of the facility terms this lender is entitled to (attested by agentBank):
+    currency : Text
+    interestRateBps : Int
+    maturityDate : Date
+  where
+    signatory lender, agentBank
+    -- No other observer. This is the partition.
+
+    ensure commitment > 0.0
+        && drawn >= 0.0
+        && drawn <= commitment
+        && accruedInterest >= 0.0
+        && currency /= ""
+        && interestRateBps >= 0
+
+    -- | Undrawn headroom on this lender's commitment. Pure derivation; settlement choices
+    -- that move `drawn` are added in Phase 2 (Settlement.daml).
+    nonconsuming choice UndrawnAmount : Decimal
+      controller lender
+      do pure (commitment - drawn)

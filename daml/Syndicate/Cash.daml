@@ -1,0 +1,9 @@
+-- | Cash.daml — the payment leg (tokenized cash / deposit holding).
+--
+-- Implemented in Phase 2 (atomic settlement). Empty-but-valid for now so the project
+-- builds and the repository layout matches CLAUDE.md §3.
+--
+-- Design intent: a `Cash` holding with signatory = issuer (agent bank as paying agent)
+-- and owner = the holder; settlement choices move Cash and a LenderPosition in ONE
+-- transaction so the cash leg and position leg never settle separately.
+module Syndicate.Cash where
