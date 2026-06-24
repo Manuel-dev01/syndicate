@@ -1,0 +1,44 @@
+# ---- Secrets & environment ----
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.jwt
+party-tokens/
+
+# ---- Daml build artifacts ----
+.daml/
+*.dar
+daml/.daml/
+
+# ---- Node / JS ----
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+coverage/
+
+# ---- Generated codegen ----
+web/daml.js/
+agent/daml.js/
+generated/
+
+# ---- Logs & OS ----
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# ---- Editor ----
+.vscode/
+.idea/
+*.swp
+
+# ---- Canton runtime ----
+canton-*/
+*.canton-state
+log/
