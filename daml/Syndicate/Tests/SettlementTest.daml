@@ -1,0 +1,158 @@
+-- | SettlementTest — atomicity and privacy are test targets for every value movement.
+--
+-- Proves: (1) drawdown moves the cash leg AND the position leg together, pro-rata; (2) a settle
+-- that violates an invariant rolls back COMPLETELY — cash can never move without the position;
+-- (3) interest accrues per lender; (4) repayment returns cash and reduces positions atomically.
+-- Each value-moving test re-asserts the privacy partition still holds afterwards.
+module Syndicate.Tests.SettlementTest where
+
+import Daml.Script
+import DA.Assert ((===))
+import DA.Optional (fromSome)
+
+import Syndicate.Facility ()
+import Syndicate.Lender
+import Syndicate.Cash
+import Syndicate.Settlement
+import Syndicate.Tests.Setup
+
+-- | Read a contract that `p` is entitled to see, failing the test if it isn't visible.
+mustSee : (Template t, HasAgreement t) => Party -> ContractId t -> Script t
+mustSee p cid = fromSome <$> queryContractId p cid
+
+-- The standard $50M drawdown funding list for the demo scenario.
+standardFundings : DemoScenario -> [(ContractId LenderPosition, ContractId Cash)]
+standardFundings s = [(s.posA, s.cashA), (s.posB, s.cashB), (s.posC, s.cashC)]
+
+drawFiftyMillion : DemoScenario -> Script [ContractId LenderPosition]
+drawFiftyMillion s = do
+  drCid <- submit s.borrower $ createCmd DrawdownRequest with
+    facilityId = facilityIdConst
+    borrower = s.borrower
+    agentBank = s.agentBank
+    amount = 50000000.0
+  (newPositions, _) <- submit s.agentBank $ exerciseCmd drCid SettleDrawdown with
+    facilityCid = s.facilityCid
+    fundings = standardFundings s
+  pure newPositions
+
+-- (1) Drawdown: both legs move together, pro-rata.
+testDrawdownAtomic : Script ()
+testDrawdownAtomic = do
+  s <- setupScenario
+  drCid <- submit s.borrower $ createCmd DrawdownRequest with
+    facilityId = facilityIdConst
+    borrower = s.borrower
+    agentBank = s.agentBank
+    amount = 50000000.0
+  (newPositions, borrowerCash) <- submit s.agentBank $ exerciseCmd drCid SettleDrawdown with
+    facilityCid = s.facilityCid
+    fundings = standardFundings s
+  let [npA, npB, npC] = newPositions
+
+  -- Position leg: drawn updated pro-rata (40/35/25 of $50M).
+  pA <- mustSee s.agentBank npA
+  pB <- mustSee s.agentBank npB
+  pC <- mustSee s.agentBank npC
+  pA.drawn === 20000000.0
+  pB.drawn === 17500000.0
+  pC.drawn === 12500000.0
+
+  -- Cash leg: borrower holds exactly $50M, and it moved in the SAME transaction.
+  bc <- mustSee s.agentBank borrowerCash
+  bc.amount === 50000000.0
+  bc.owner === s.borrower
+
+  -- Lender cash spent: A's original $40M holding is consumed; only $20M change remains.
+  origA <- queryContractId s.lenderA s.cashA
+  origA === None
+  aCash <- query @Cash s.lenderA
+  map (\(_, c) -> c.amount) aCash === [20000000.0]
+
+  -- Privacy still holds after settlement.
+  aPositions <- map fst <$> query @LenderPosition s.lenderA
+  aPositions === [npA]
+  assertMsg "Lender A must not see Lender B's position" (npB `notElem` aPositions)
+  bCashVisible <- query @Cash s.lenderA
+  assertMsg "Lender A sees only its own cash" (all (\(_, c) -> c.owner == s.lenderA) bCashVisible)
+  borrowerPositions <- query @LenderPosition s.borrower
+  assertMsg "Borrower must not see any LenderPosition" (null borrowerPositions)
+
+-- (2) THE atomicity proof: an invalid settle rolls back completely — all or nothing.
+testDrawdownRollbackIsAllOrNothing : Script ()
+testDrawdownRollbackIsAllOrNothing = do
+  s <- setupScenario
+  -- Over-sized $120M draw on a $100M facility: Lender A's pro-rata share ($48M) exceeds its
+  -- $40M commitment, so Fund's invariant fails mid-settlement.
+  drCid <- submit s.borrower $ createCmd DrawdownRequest with
+    facilityId = facilityIdConst
+    borrower = s.borrower
+    agentBank = s.agentBank
+    amount = 120000000.0
+  submitMustFail s.agentBank $ exerciseCmd drCid SettleDrawdown with
+    facilityCid = s.facilityCid
+    fundings = standardFundings s
+
+  -- NOTHING moved: positions still undrawn, lender cash intact, borrower has no cash.
+  pA <- mustSee s.agentBank s.posA
+  pA.drawn === 0.0
+  ca <- mustSee s.agentBank s.cashA
+  ca.amount === 40000000.0
+  borrowerCash <- query @Cash s.borrower
+  assertMsg "Borrower must hold no cash after a rolled-back drawdown" (null borrowerCash)
+
+-- (3) Interest accrues per lender, privately.
+testInterestAccrual : Script ()
+testInterestAccrual = do
+  s <- setupScenario
+  newPositions <- drawFiftyMillion s
+  let [npA, _, _] = newPositions
+  -- Accrue 90 days on Lender A's $20M drawn at 8.50% ACT/360 = $425,000.
+  npA2 <- submit s.agentBank $ exerciseCmd npA AccrueInterest with days = 90
+  pA <- mustSee s.agentBank npA2
+  pA.accruedInterest === 425000.0
+  -- Privacy: Lender B cannot see Lender A's (now interest-bearing) position.
+  bPositions <- map fst <$> query @LenderPosition s.lenderB
+  assertMsg "Lender B must not see Lender A's position" (npA2 `notElem` bPositions)
+
+-- (4) Repayment: cash returns to lenders and positions reduce, atomically.
+testRepaymentAtomic : Script ()
+testRepaymentAtomic = do
+  s <- setupScenario
+  drCid <- submit s.borrower $ createCmd DrawdownRequest with
+    facilityId = facilityIdConst
+    borrower = s.borrower
+    agentBank = s.agentBank
+    amount = 50000000.0
+  (newPositions, borrowerCash) <- submit s.agentBank $ exerciseCmd drCid SettleDrawdown with
+    facilityCid = s.facilityCid
+    fundings = standardFundings s
+  let [npA, npB, npC] = newPositions
+
+  -- Borrower repays $10M principal, pro-rata (A 4M / B 3.5M / C 2.5M), no interest.
+  rrCid <- submit s.borrower $ createCmd RepaymentRequest with
+    facilityId = facilityIdConst
+    borrower = s.borrower
+    agentBank = s.agentBank
+    amount = 10000000.0
+  (repaidPositions, lenderCashes) <- submit s.agentBank $ exerciseCmd rrCid SettleRepayment with
+    borrowerCashCid = borrowerCash
+    repayments = [(npA, 4000000.0, 0.0), (npB, 3500000.0, 0.0), (npC, 2500000.0, 0.0)]
+  let [rpA, _, _] = repaidPositions
+  let [lcA, _, _] = lenderCashes
+
+  -- Position leg: A's drawn 20M → 16M.
+  pA <- mustSee s.agentBank rpA
+  pA.drawn === 16000000.0
+  -- Cash leg: lender A received $4M; borrower's $50M consumed, $40M change returned.
+  lca <- mustSee s.agentBank lcA
+  lca.amount === 4000000.0
+  lca.owner === s.lenderA
+  origBorrowerCash <- queryContractId s.agentBank borrowerCash
+  origBorrowerCash === None
+  bCash <- query @Cash s.borrower
+  map (\(_, c) -> c.amount) bCash === [40000000.0]
+
+  -- Privacy holds after repayment.
+  aPositions <- map fst <$> query @LenderPosition s.lenderA
+  aPositions === [rpA]

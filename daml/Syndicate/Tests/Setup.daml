@@ -1,0 +1,93 @@
+-- | Setup — shared scenario builder for the settlement tests.
+--
+-- Forms the standard demo facility ($100M, 3 lenders 40/35/25M) and mints each lender starting
+-- cash equal to its commitment, so the settlement tests can draw against it. Keeping this in one
+-- place means every test exercises the exact same starting state.
+module Syndicate.Tests.Setup where
+
+import Daml.Script
+import DA.Date (date, Month(..))
+
+import Syndicate.Roles
+import Syndicate.Facility
+import Syndicate.Lender
+import Syndicate.Cash
+
+facilityIdConst : Text
+facilityIdConst = "FAC-2026-001"
+
+totalCommitmentConst : Decimal
+totalCommitmentConst = 100000000.0
+
+rateBpsConst : Int
+rateBpsConst = 850
+
+maturityConst : Date
+maturityConst = date 2029 Jun 30
+
+-- | Everything a settlement test needs handed back from setup.
+data DemoScenario = DemoScenario with
+    borrower : Party
+    agentBank : Party
+    lenderA : Party
+    lenderB : Party
+    lenderC : Party
+    facilityCid : ContractId Facility
+    posA : ContractId LenderPosition
+    posB : ContractId LenderPosition
+    posC : ContractId LenderPosition
+    cashA : ContractId Cash
+    cashB : ContractId Cash
+    cashC : ContractId Cash
+
+-- | Create one lender's position (signed by lender + agent bank).
+createPosition :
+  AgentBank -> Lender -> Decimal -> Script (ContractId LenderPosition)
+createPosition agentBank lender commitment =
+  submitMulti [lender, agentBank] [] $
+    createCmd LenderPosition with
+      facilityId = facilityIdConst
+      lender
+      agentBank
+      commitment
+      drawn = 0.0
+      accruedInterest = 0.0
+      currency = "USD"
+      interestRateBps = rateBpsConst
+      maturityDate = maturityConst
+
+-- | Mint cash for an owner (signed by the agent-bank issuer + the owner).
+mintCash : AgentBank -> Party -> Decimal -> Script (ContractId Cash)
+mintCash agentBank owner amount =
+  submitMulti [agentBank, owner] [] $
+    createCmd Cash with issuer = agentBank, owner, amount
+
+-- | Stand up the standard demo scenario.
+setupScenario : Script DemoScenario
+setupScenario = do
+  borrower  <- allocateParty "Borrower"
+  agentBank <- allocateParty "AgentBank"
+  lenderA   <- allocateParty "LenderA"
+  lenderB   <- allocateParty "LenderB"
+  lenderC   <- allocateParty "LenderC"
+
+  facilityCid <- submitMulti [borrower, agentBank] [] $
+    createCmd Facility with
+      facilityId = facilityIdConst
+      borrower
+      agentBank
+      totalCommitment = totalCommitmentConst
+      currency = "USD"
+      interestRateBps = rateBpsConst
+      maturityDate = maturityConst
+
+  posA <- createPosition agentBank lenderA 40000000.0
+  posB <- createPosition agentBank lenderB 35000000.0
+  posC <- createPosition agentBank lenderC 25000000.0
+
+  -- Each lender holds cash equal to its full commitment.
+  cashA <- mintCash agentBank lenderA 40000000.0
+  cashB <- mintCash agentBank lenderB 35000000.0
+  cashC <- mintCash agentBank lenderC 25000000.0
+
+  pure DemoScenario with ..

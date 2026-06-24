@@ -1,8 +1,125 @@
--- | Settlement.daml — atomic DvP-style settlement choices.
+-- | Settlement.daml — atomic settlement orchestrators.
 --
--- Implemented across Phase 2 (drawdown, interest accrual, repayment) and Phase 3
--- (secondary lender-to-lender trade). Empty-but-valid for now.
+-- These templates sequence the per-position choices on `LenderPosition` (Fund / Repay) together
+-- with the borrower's cash leg so that, in ONE Daml transaction, cash and positions move
+-- together or not at all (CLAUDE.md §1.2). The borrower initiates; the agent bank settles.
 --
--- Design intent (CLAUDE.md §1.2, §4): every settlement moves the cash leg AND the
--- position leg in a SINGLE Daml transaction or not at all. Never two commits.
+-- Authorization (verified against the Daml ledger model): a choice on a `DrawdownRequest` /
+-- `RepaymentRequest` (signatory borrower, controller agentBank) carries {borrower, agentBank}
+-- authority, enough to create/archive borrower cash. Each nested `Fund`/`Repay` on a
+-- `LenderPosition` carries {lender, agentBank} authority, enough to spend/return that lender's
+-- cash and move its `drawn` — without the lender co-signing this transaction.
 module Syndicate.Settlement where
+
+import Syndicate.Roles
+import Syndicate.Facility
+import Syndicate.Lender
+import Syndicate.Cash
+
+-- | Fund each lender pro-rata to its commitment. The LAST lender absorbs any rounding dust so
+-- the funded total equals the requested amount exactly. Each `Fund` is a nested exercise, so the
+-- whole loop is part of the single settlement transaction.
+fundPositions :
+  Decimal                                              -- ^ facility totalCommitment
+  -> Decimal                                           -- ^ requested drawdown amount
+  -> Decimal                                           -- ^ amount funded so far (accumulator)
+  -> [(ContractId LenderPosition, ContractId Cash)]
+  -> Update ([ContractId LenderPosition], Decimal)
+fundPositions _ _ funded [] = pure ([], funded)
+fundPositions _ amount funded [(posCid, cashCid)] = do
+  -- Last lender: absorb the remainder so the legs reconcile to the cent.
+  let share = amount - funded
+  (newPos, f) <- exercise posCid Fund with cashCid, fundAmount = share
+  pure ([newPos], funded + f)
+fundPositions total amount funded ((posCid, cashCid) :: rest) = do
+  pos <- fetch posCid
+  let share = amount * pos.commitment / total
+  (newPos, f) <- exercise posCid Fund with cashCid, fundAmount = share
+  (newPositions, finalFunded) <- fundPositions total amount (funded + f) rest
+  pure (newPos :: newPositions, finalFunded)
+
+-- | Repay each lender, returning the new positions and the cash holdings created for lenders.
+repayPositions :
+  [(ContractId LenderPosition, Decimal, Decimal)]
+  -> Update ([ContractId LenderPosition], [ContractId Cash])
+repayPositions [] = pure ([], [])
+repayPositions ((posCid, principal, interestPaid) :: rest) = do
+  (newPos, cashOut) <- exercise posCid Repay with principal, interestPaid
+  (poss, cashes) <- repayPositions rest
+  pure (newPos :: poss, cashOut :: cashes)
+
+-- | DrawdownRequest — the borrower's request to draw funds against the facility.
+--
+-- SIGNATORY: borrower
+--   The borrower initiates the draw; its authority is needed to create the borrower's cash on
+--   settlement.
+-- OBSERVER: agentBank
+--   The agent bank must see the request to settle it. Lenders are NOT observers — a draw request
+--   never appears on a lender's ledger view, so the privacy partition is preserved.
+-- VISIBILITY CHECK: carries only facility-level amount/borrower/agentBank — no per-lender data,
+--   no other lender as stakeholder.
+template DrawdownRequest
+  with
+    facilityId : Text
+    borrower : Borrower
+    agentBank : AgentBank
+    amount : Decimal
+  where
+    signatory borrower
+    observer agentBank
+    ensure amount > 0.0
+
+    -- | Settle the drawdown: fund each lender pro-rata AND hand the borrower its cash, atomically.
+    choice SettleDrawdown : ([ContractId LenderPosition], ContractId Cash)
+      with
+        facilityCid : ContractId Facility
+        fundings : [(ContractId LenderPosition, ContractId Cash)]
+      controller agentBank
+      do
+        fac <- fetch facilityCid
+        assertMsg "Facility id must match the request" (fac.facilityId == facilityId)
+        assertMsg "A drawdown must fund the whole syndicate" (not (null fundings))
+        (newPositions, funded) <- fundPositions fac.totalCommitment amount 0.0 fundings
+        assertMsg "Funded total must equal the requested amount" (funded == amount)
+        -- Borrower cash created here, where {borrower, agentBank} authority is available.
+        borrowerCash <- create Cash with issuer = agentBank, owner = borrower, amount
+        pure (newPositions, borrowerCash)
+
+-- | RepaymentRequest — the borrower's request to repay principal and/or accrued interest.
+--
+-- SIGNATORY: borrower / OBSERVER: agentBank. Same visibility reasoning as DrawdownRequest:
+-- lenders are not stakeholders, so the partition holds.
+template RepaymentRequest
+  with
+    facilityId : Text
+    borrower : Borrower
+    agentBank : AgentBank
+    amount : Decimal
+  where
+    signatory borrower
+    observer agentBank
+    ensure amount > 0.0
+
+    -- | Settle the repayment: consume the borrower's cash AND return cash to lenders while
+    -- reducing their drawn/accrued balances, atomically.
+    choice SettleRepayment : ([ContractId LenderPosition], [ContractId Cash])
+      with
+        borrowerCashCid : ContractId Cash
+        repayments : [(ContractId LenderPosition, Decimal, Decimal)]
+      controller agentBank
+      do
+        bc <- fetch borrowerCashCid
+        assertMsg "Borrower cash must be owned by the borrower" (bc.owner == borrower)
+        assertMsg "Borrower cash issuer must be the agent bank" (bc.issuer == agentBank)
+        assertMsg "A repayment must reach at least one lender" (not (null repayments))
+        let totalRepay = foldl (\acc (_, p, i) -> acc + p + i) 0.0 repayments
+        assertMsg "Repayment total must equal the requested amount" (totalRepay == amount)
+        assertMsg "Borrower cash is insufficient for the repayment" (bc.amount >= totalRepay)
+        archive borrowerCashCid
+        if bc.amount > totalRepay
+          then do
+            _ <- create Cash with
+              issuer = agentBank, owner = borrower, amount = bc.amount - totalRepay
+            pure ()
+          else pure ()
+        repayPositions repayments
