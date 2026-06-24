@@ -8,6 +8,7 @@
 module Syndicate.Lender where
 
 import Syndicate.Roles
+import Syndicate.Cash
 
 -- | LenderPosition — one lender's slice of a shared facility.
 --
@@ -52,8 +53,69 @@ template LenderPosition
         && currency /= ""
         && interestRateBps >= 0
 
-    -- | Undrawn headroom on this lender's commitment. Pure derivation; settlement choices
-    -- that move `drawn` are added in Phase 2 (Settlement.daml).
+    -- | Undrawn headroom on this lender's commitment. Pure derivation.
     nonconsuming choice UndrawnAmount : Decimal
       controller lender
       do pure (commitment - drawn)
+
+    -- The settlement choices below all run with {lender, agentBank} authority (the choice's
+    -- actor agentBank PLUS the contract's signatories lender + agentBank), so the agent bank
+    -- can settle against this position WITHOUT the lender co-signing the transaction — the
+    -- lender's consent was frozen in when the position was created. They are orchestrated, one
+    -- transaction at a time, from Syndicate.Settlement so the position leg and the cash leg
+    -- move together or not at all.
+
+    -- | Fund this lender's pro-rata share of a drawdown from its own `Cash`.
+    -- Spends the lender's cash (returning change if any) and increases `drawn`. Does NOT create
+    -- borrower cash — that needs borrower authority and happens one level up in SettleDrawdown.
+    choice Fund : (ContractId LenderPosition, Decimal)
+      with
+        cashCid : ContractId Cash
+        fundAmount : Decimal
+      controller agentBank
+      do
+        c <- fetch cashCid
+        assertMsg "Cash must be owned by this lender" (c.owner == lender)
+        assertMsg "Cash issuer must be the agent bank" (c.issuer == agentBank)
+        assertMsg "fundAmount must be positive" (fundAmount > 0.0)
+        assertMsg "Cash is insufficient to fund this share" (c.amount >= fundAmount)
+        assertMsg "Funding would exceed undrawn commitment" (drawn + fundAmount <= commitment)
+        archive cashCid
+        if c.amount > fundAmount
+          then do
+            _ <- create Cash with issuer = agentBank, owner = lender, amount = c.amount - fundAmount
+            pure ()
+          else pure ()
+        newPos <- create this with drawn = drawn + fundAmount
+        pure (newPos, fundAmount)
+
+    -- | Accrue interest on this lender's drawn balance for `days` (ACT/360, simple interest).
+    choice AccrueInterest : ContractId LenderPosition
+      with
+        days : Int
+      controller agentBank
+      do
+        assertMsg "days must be positive" (days > 0)
+        let interest = drawn * (intToDecimal interestRateBps / 10000.0)
+                             * (intToDecimal days / 360.0)
+        create this with accruedInterest = accruedInterest + interest
+
+    -- | Repay principal and/or accrued interest to this lender. Creates the lender's returned
+    -- `Cash` and reduces `drawn` / `accruedInterest` in the same transaction.
+    choice Repay : (ContractId LenderPosition, ContractId Cash)
+      with
+        principal : Decimal
+        interestPaid : Decimal
+      controller agentBank
+      do
+        assertMsg "principal must be >= 0" (principal >= 0.0)
+        assertMsg "interestPaid must be >= 0" (interestPaid >= 0.0)
+        assertMsg "principal exceeds drawn" (principal <= drawn)
+        assertMsg "interestPaid exceeds accrued interest" (interestPaid <= accruedInterest)
+        assertMsg "repayment must be positive" (principal + interestPaid > 0.0)
+        cashOut <- create Cash with
+          issuer = agentBank, owner = lender, amount = principal + interestPaid
+        newPos <- create this with
+          drawn = drawn - principal
+          accruedInterest = accruedInterest - interestPaid
+        pure (newPos, cashOut)

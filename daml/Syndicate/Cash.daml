@@ -1,9 +1,30 @@
--- | Cash.daml — the payment leg (tokenized cash / deposit holding).
+-- | Cash.daml — the payment leg: a simple tokenized cash / deposit holding.
 --
--- Implemented in Phase 2 (atomic settlement). Empty-but-valid for now so the project
--- builds and the repository layout matches CLAUDE.md §3.
---
--- Design intent: a `Cash` holding with signatory = issuer (agent bank as paying agent)
--- and owner = the holder; settlement choices move Cash and a LenderPosition in ONE
--- transaction so the cash leg and position leg never settle separately.
+-- This is the cash side of every atomic settlement. A `Cash` holding is an issuer-backed
+-- claim: the agent bank acts as the facility's paying agent and is the cash `issuer`, while
+-- `owner` is whoever currently holds the funds (a lender, or the borrower).
 module Syndicate.Cash where
+
+-- | Cash — an issuer-backed cash holding.
+--
+-- SIGNATORY: issuer, owner
+--   Both sign: the issuer (agent bank / paying agent) stands behind the claim, and the owner
+--   must consent to any movement of its own funds. Because the issuer is a signatory of every
+--   Cash, a settlement choice that already carries issuer authority can move cash atomically.
+-- OBSERVER: (none beyond the signatories)
+--   No third party observes a holding. Lender A cannot see Lender B's `Cash`; only B and the
+--   issuer (agent bank) can. The agent bank seeing all flows is correct for a paying agent.
+-- VISIBILITY CHECK: A holding reveals only its own owner + amount to its issuer and owner — it
+--   carries no facility or per-lender breakdown, so it leaks nothing about other lenders.
+--
+-- Settlement performs issuer-mediated transfers INLINE: within one transaction it archives the
+-- payer's `Cash` and creates the payee's `Cash`. Net issuer liability is unchanged, so this is a
+-- faithful transfer, not a mint/burn — and it composes atomically with the position leg.
+template Cash
+  with
+    issuer : Party
+    owner : Party
+    amount : Decimal
+  where
+    signatory issuer, owner
+    ensure amount > 0.0
