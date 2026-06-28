@@ -1,3 +1,9 @@
+# ---- Internal working docs (kept local, not in the judge-facing repo) ----
+CLAUDE.md
+BUILD-ROADMAP.md
+RESEARCH-VERIFY.md
+docs/DEMO-SCRIPT.md
+
 # ---- Secrets & environment ----
 .env
 .env.local

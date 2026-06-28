@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Source this to put the local Daml 2.10.4 toolchain + JDK 17 on PATH for the current shell:
 #   source scripts/daml-env.sh
-# These are no-admin, user-local installs created during Phase 0 (see docs/ARCHITECTURE.md).
+# These point at no-admin, user-local installs of the Daml SDK and JDK.
 # Adjust the paths if the toolchain lives elsewhere on your machine.
 
 export JAVA_HOME="${JAVA_HOME:-/c/Users/DELL 5420/toolchain/jdk-17.0.19+10}"

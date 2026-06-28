@@ -1,6 +1,6 @@
 import type { Config } from "tailwindcss";
 
-// Institutional, dark, data-forward aesthetic (CLAUDE.md §6). Palette refined in Phase 5.
+// Institutional, dark, data-forward aesthetic.
 const config: Config = {
   content: [
     "./app/**/*.{ts,tsx}",

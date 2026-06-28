@@ -1,8 +1,5 @@
 # The Privacy Model — why this is a Canton-native product
 
-> Stub — written out fully in Phase 6. This captures the spine of the argument now so the
-> design stays honest as we build.
-
 ## The guarantee
 
 In a syndicated facility, competing lenders co-invest in one deal but must never see each
@@ -29,5 +26,3 @@ This is asserted as a test, not assumed: see `daml/Syndicate/Tests/PrivacyTest.d
 - **ZK / FHE** can hide values but don't cleanly express *who is a stakeholder of which
   sub-transaction* across mutually-distrusting parties. Canton's signatory/observer model and
   sub-transaction privacy express exactly that, and compose atomically.
-
-_(Expand with concrete leak scenarios and the synchronizer's role in Phase 6.)_

@@ -9,9 +9,6 @@ on Canton, eliminating settlement risk and reconciliation breaks. An LLM **Agent
 monitors covenants against private borrower data and sequences settlement, constrained at all
 times by on-ledger Daml authorization.
 
-> Status: **early build.** Daml privacy partition + multi-party tests landing first
-> (see [BUILD-ROADMAP.md](BUILD-ROADMAP.md)). This README is kept judge-ready as we go.
-
 ---
 
 ## Why this can only be built well on Canton
@@ -52,8 +49,8 @@ private borrower data — and can execute only what its Daml party is authorized
 
 | Layer | Tech |
 |---|---|
-| Smart contracts | Daml (local dev on **2.10.4 LTS**; DevNet deploy on the **Canton 3.x** line) |
-| Ledger | Canton — LocalNet for dev, **DevNet** for the live deployment |
+| Smart contracts | Daml |
+| Ledger | Canton — **DevNet** for the live deployment |
 | Ledger access | JSON Ledger API (frontend) + gRPC Ledger API v2 |
 | Frontend | Next.js (App Router) + TypeScript + Tailwind |
 | Agent service | Node/TypeScript calling the Anthropic API (separate process, own party) |
@@ -64,10 +61,8 @@ Repository layout and design rationale: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 
 ## How to run
 
-> Full instructions land as each phase completes. The Daml core builds today.
-
 ### Prerequisites
-- **Daml SDK 2.10.4** and a **JDK 17** (see `docs/ARCHITECTURE.md` for setup).
+- **Daml SDK** and a **JDK 17+**.
 - Node.js 20+ and npm.
 
 ### Build & test the Daml model
@@ -77,7 +72,7 @@ daml build      # compile the model to a DAR
 daml test       # run the multi-party Daml Script tests, incl. the privacy partition
 ```
 
-### Frontend & agent (later phases)
+### Frontend & agent
 ```bash
 cd web   && npm install && npm run dev     # institutional dashboard + role-switcher
 cd agent && npm install && npm run dev     # Agent-Bank Co-Pilot service
@@ -90,13 +85,14 @@ configured via environment variables.
 
 ## Live deployment
 
-DevNet URL: _coming in Phase 3._ The architecture is built DevNet-ready from day one.
+Runs live on Canton **DevNet**; the public URL is published with the deployment. The architecture
+is DevNet-ready from day one.
 
 ---
 
 ## Demo
 
-The 3-minute shot list lives in [docs/DEMO-SCRIPT.md](docs/DEMO-SCRIPT.md). The money shot is the
+The money shot is the
 **role-switcher**: switch between Borrower / Agent Bank / Lender A / B / C on one live deployment
 and watch each role render a demonstrably different slice of the same facility — with Lender A's
 screen showing zero trace of Lender B.

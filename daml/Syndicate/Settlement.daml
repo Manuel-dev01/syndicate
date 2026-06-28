@@ -2,7 +2,7 @@
 --
 -- These templates sequence the per-position choices on `LenderPosition` (Fund / Repay) together
 -- with the borrower's cash leg so that, in ONE Daml transaction, cash and positions move
--- together or not at all (CLAUDE.md §1.2). The borrower initiates; the agent bank settles.
+-- together or not at all. The borrower initiates; the agent bank settles.
 --
 -- Authorization (verified against the Daml ledger model): a choice on a `DrawdownRequest` /
 -- `RepaymentRequest` (signatory borrower, controller agentBank) carries {borrower, agentBank}
