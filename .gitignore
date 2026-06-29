@@ -4,6 +4,9 @@ BUILD-ROADMAP.md
 RESEARCH-VERIFY.md
 docs/DEMO-SCRIPT.md
 
+# ---- Vercel ----
+.vercel/
+
 # ---- Secrets & environment ----
 .env
 .env.local

@@ -85,8 +85,14 @@ configured via environment variables.
 
 ## Live deployment
 
-Runs live on Canton **DevNet**; the public URL is published with the deployment. The architecture
-is DevNet-ready from day one.
+**Live:** https://syndicate-delta.vercel.app — landing page and the **deal-spine product** (`/app`).
+
+The product reads from a backend typed to the Daml model (`Facility` / `LenderPosition` / `Cash` /
+`Settlement`): the privacy partition is enforced server-side (a lender sees only its own position;
+others are sealed), settlements move both legs atomically or reject whole, and the Agent-Bank
+Co-Pilot reasons over the borrower's private data via an LLM. The data layer is abstracted so the
+live **Canton DevNet** ledger replaces it through the JSON Ledger API with no UI change. The
+architecture is DevNet-ready from day one.
 
 ---
 
