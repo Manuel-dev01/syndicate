@@ -4,6 +4,9 @@ BUILD-ROADMAP.md
 RESEARCH-VERIFY.md
 docs/DEMO-SCRIPT.md
 
+# ---- Design comps (source-of-truth mockups, kept local) ----
+*.dc.html
+
 # ---- Vercel ----
 .vercel/
 
