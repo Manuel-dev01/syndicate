@@ -10,6 +10,9 @@ docs/DEMO-SCRIPT.md
 # ---- Vercel ----
 .vercel/
 
+# ---- Generated at deploy time ----
+scripts/.parties.json
+
 # ---- Secrets & environment ----
 .env
 .env.local

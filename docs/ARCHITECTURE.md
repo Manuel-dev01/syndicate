@@ -39,6 +39,66 @@ root; `daml test` runs every `Script` in the project.
 - `// VERIFY:` Daml-LF compatibility for the DAR on Canton 3.x DevNet — confirm against
   docs.digitalasset.com and docs.global.canton.network.
 
+## DevNet deployment runbook
+
+Deploying to **Canton Network DevNet** (the live submission target). Verified against
+docs.digitalasset.com, docs.sync.global, and the cn-quickstart repo (2026-07).
+
+### Two hard prerequisites
+1. **LF-2 DAR.** The model must be built with an **SDK 3.4.x** toolchain (Daml-LF **2.x**); a
+   2.10.4/LF-1.x DAR is not accepted by a Canton 3.x participant. See "Toolchain & LF version".
+2. **A sponsored validator node.** DevNet runs a **validator** (participant + validator app +
+   Canton Coin wallet + Postgres) on a **hosted Linux VM with a stable egress IP**. A sponsoring
+   **Super Validator (SV)** must **allowlist that IP** before the node can join — **2–7 day lead
+   time** (allowlist resets ~quarterly). The onboarding *secret* is self-serve (1-hour TTL).
+   - VM sizing: Docker Compose ≥ 2.26, ~8–16 GB RAM.
+   - Canton Coin for synchronizer traffic is **auto-tapped** on DevNet — no manual purchase to
+     upload a DAR / allocate parties / submit basic transactions.
+   - Sources: [Validator onboarding](https://docs.sync.global/validator_operator/validator_onboarding.html),
+     [Docker-compose validator](https://docs.sync.global/validator_operator/validator_compose.html),
+     migration ids at [sync.global/sv-network](https://sync.global/sv-network/).
+
+### Steps (all scripted in `scripts/deploy-devnet.sh`; run on the allowlisted VM)
+1. `cp .env.example .env` and fill `SPONSOR_SV_URL`, `MIGRATION_ID`, `IMAGE_TAG`, `PARTY_HINT`,
+   `LEDGER_JSON_API_URL`, `LEDGER_JWT_SECRET`, `DAR_PATH`.
+2. `bash scripts/deploy-devnet.sh` — fetches the onboarding secret
+   (`POST $SPONSOR_SV_URL/api/sv/v0/devnet/onboard/validator/prepare`), starts the validator
+   (`./start.sh -s … -o … -p … -m <migrationId> -w`), waits for the JSON API, uploads the DAR
+   (`POST /v2/packages`), then allocates parties + seeds the facility.
+3. Export `DAML_PACKAGE_ID` (`daml damlc inspect-dar --json $DAR_PATH | jq -r .main_package_id`)
+   before the seed step so `init-ledger.ts` targets the uploaded package.
+
+### JSON Ledger API v2 + auth
+- Built into the Canton 3.x participant (no separate `daml json-api` process); endpoints under
+  `/v2/*` (parties, packages, `commands/submit-and-wait`, `state/active-contracts`), default 7575.
+- **JWT (HS256 dev tokens):** `sub` = ledger user id, `scope: daml_ledger_api` (or audience mode);
+  the participant maps user → actAs/readAs parties, and the command body carries `actAs`. The
+  `scripts/lib/jsonLedger.ts` client mints these. Source:
+  [JWT auth (3.5)](https://docs.digitalasset.com/operate/3.5/howtos/secure/apis/jwt.html),
+  [JSON Ledger API tutorial (3.5)](https://docs.digitalasset.com/build/3.5/tutorials/json-api/canton_and_the_json_ledger_api.html).
+
+### Verification (on DevNet)
+- `curl $LEDGER_JSON_API_URL/v2/packages` lists the syndicate package.
+- Active contracts as AgentBank show the facility + 3 positions; a **lender token sees only its own
+  position** — the privacy partition, on the real network.
+
+### LocalNet dry-run (recommended before DevNet)
+Splice **LocalNet** / **cn-quickstart** runs the whole Canton 3.x stack locally (Docker ~8 GB, no
+sponsor, `tap` for Canton Coin) — same JSON API v2 and same LF-2 DAR. Use it to validate the DAR
+upload + seed scripts end-to-end before the DevNet allowlist clears.
+Source: [LocalNet](https://docs.sync.global/app_dev/localnet.html),
+[cn-quickstart](https://github.com/digital-asset/cn-quickstart) (note: LocalNet-only since Jul 2025).
+
+## Toolchain & LF version
+
+- **Local dev/tests + the DevNet DAR: Daml SDK 3.4.x → Daml-LF 2.x.** Canton 3.x (DevNet) runs LF
+  2.x; a 2.10.4/LF-1.x DAR is not accepted. (Earlier phases used 2.10.4 for a fast local loop; the
+  model is written in the portable subset, so the migration is a retarget plus a few API fixes.)
+- JDK 17 (Temurin), user-local. `source scripts/daml-env.sh`.
+
 ## Canton/Daml sharp edges (append as found)
 
-_(none yet)_
+- **`agreement` / `HasAgreement` removed in Daml 3.x.** The 2.x `HasAgreement` constraint (used on a
+  test helper) does not exist under SDK 3.4.x — drop it; `queryContractId` needs only `Template t`.
+- **Daml-LF major split.** No public single-page LF↔Canton matrix; LF 1.x (2.x SDKs) and LF 2.x
+  (3.x SDKs) are different majors and not cross-compatible on a participant.

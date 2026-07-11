@@ -1,0 +1,16 @@
+{
+  "name": "syndicate-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DevNet deploy + JSON Ledger API v2 seeding scripts.",
+  "type": "module",
+  "scripts": {
+    "allocate": "tsx allocate-parties.ts",
+    "seed": "tsx init-ledger.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "@types/node": "^20.14.0"
+  }
+}
