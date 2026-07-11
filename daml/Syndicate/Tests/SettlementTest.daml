@@ -156,3 +156,105 @@ testRepaymentAtomic = do
   -- Privacy holds after repayment.
   aPositions <- map fst <$> query @LenderPosition s.lenderA
   aPositions === [rpA]
+
+-- Build an A→B sell proposal for `notional` at `price`, given a drawn scenario.
+proposeTrade : DemoScenario -> Decimal -> Decimal -> Script (ContractId TradeProposal)
+proposeTrade s notional price =
+  submit s.lenderA $ createCmd TradeProposal with
+    facilityId = facilityIdConst
+    seller = s.lenderA
+    buyer = s.lenderB
+    agentBank = s.agentBank
+    notional
+    price
+    currency = "USD"
+
+-- (5) Secondary DvP: the position slice moves A→B and cash moves B→A, atomically.
+testSecondaryTradeAtomic : Script ()
+testSecondaryTradeAtomic = do
+  s <- setupScenario
+  positions <- drawFiftyMillion s -- A drawn 20M / commit 40M; B drawn 17.5M / commit 35M
+  let [npA, npB, _] = positions
+
+  propCid <- proposeTrade s 8000000.0 99.25
+  agreedCid <- submit s.lenderB $ exerciseCmd propCid Accept
+  buyerCash <- mintCash s.agentBank s.lenderB 8000000.0
+  (nsp, nbp, sellerCash) <- submit s.agentBank $ exerciseCmd agreedCid SettleTrade with
+    sellerPosCid = npA
+    buyerPosCid = npB
+    buyerCashCid = buyerCash
+
+  -- Position leg: slice ($8M) moves A → B (commitment + drawn together).
+  sp <- mustSee s.agentBank nsp
+  bp <- mustSee s.agentBank nbp
+  sp.drawn === 12000000.0
+  sp.commitment === 32000000.0
+  bp.drawn === 25500000.0
+  bp.commitment === 43000000.0
+
+  -- Cash leg (same transaction): seller receives $8M * 99.25 = $7.94M; buyer's $8M consumed.
+  sc <- mustSee s.agentBank sellerCash
+  sc.amount === 7940000.0
+  sc.owner === s.lenderA
+  origBuyerCash <- queryContractId s.lenderB buyerCash
+  origBuyerCash === None
+
+-- (6) Confidentiality: price and counterparties are invisible to the borrower and other lenders,
+-- and the partition still holds through the trade.
+testSecondaryConfidential : Script ()
+testSecondaryConfidential = do
+  s <- setupScenario
+  positions <- drawFiftyMillion s
+  let [npA, npB, _] = positions
+
+  propCid <- proposeTrade s 8000000.0 99.25
+
+  -- The OFFER is visible only to seller, buyer, and agent bank.
+  cProps <- query @TradeProposal s.lenderC
+  assertMsg "Lender C must not see the trade proposal" (null cProps)
+  bProps <- query @TradeProposal s.borrower
+  assertMsg "Borrower must not see the trade proposal" (null bProps)
+  agentProps <- map fst <$> query @TradeProposal s.agentBank
+  assertMsg "Agent bank sees the proposal" (propCid `elem` agentProps)
+  buyerProps <- map fst <$> query @TradeProposal s.lenderB
+  assertMsg "Buyer sees the proposal" (propCid `elem` buyerProps)
+
+  -- After acceptance the agreement stays confidential from C and the borrower.
+  agreedCid <- submit s.lenderB $ exerciseCmd propCid Accept
+  cAgreed <- query @TradeAgreed s.lenderC
+  assertMsg "Lender C must not see the agreed trade" (null cAgreed)
+  bAgreed <- query @TradeAgreed s.borrower
+  assertMsg "Borrower must not see the agreed trade" (null bAgreed)
+
+  -- After settlement, C still cannot see either counterparty's updated position.
+  buyerCash <- mintCash s.agentBank s.lenderB 8000000.0
+  (nsp, nbp, _) <- submit s.agentBank $ exerciseCmd agreedCid SettleTrade with
+    sellerPosCid = npA
+    buyerPosCid = npB
+    buyerCashCid = buyerCash
+  cPositions <- map fst <$> query @LenderPosition s.lenderC
+  assertMsg "Lender C must not see the seller's traded position" (nsp `notElem` cPositions)
+  assertMsg "Lender C must not see the buyer's traded position" (nbp `notElem` cPositions)
+
+-- (7) All-or-nothing: an over-sized trade rolls back completely — the slice can't move without cash.
+testSecondaryRollbackIsAllOrNothing : Script ()
+testSecondaryRollbackIsAllOrNothing = do
+  s <- setupScenario
+  positions <- drawFiftyMillion s -- A drawn 20M
+  let [npA, npB, _] = positions
+
+  -- Try to sell $30M — exceeds A's $20M drawn slice.
+  propCid <- proposeTrade s 30000000.0 99.25
+  agreedCid <- submit s.lenderB $ exerciseCmd propCid Accept
+  buyerCash <- mintCash s.agentBank s.lenderB 30000000.0
+  submitMustFail s.agentBank $ exerciseCmd agreedCid SettleTrade with
+    sellerPosCid = npA
+    buyerPosCid = npB
+    buyerCashCid = buyerCash
+
+  -- Nothing moved: seller position and buyer cash are untouched.
+  spA <- mustSee s.agentBank npA
+  spA.drawn === 20000000.0
+  spA.commitment === 40000000.0
+  bcash <- mustSee s.agentBank buyerCash
+  bcash.amount === 30000000.0

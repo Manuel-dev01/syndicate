@@ -123,3 +123,106 @@ template RepaymentRequest
             pure ()
           else pure ()
         repayPositions repayments
+
+-- | TradeProposal — Lender A (seller) offers to sell a slice of its position to Lender B (buyer).
+--
+-- SIGNATORY: seller
+--   The seller originates the offer; only it can create or cancel the proposal.
+-- OBSERVER: agentBank, buyer
+--   The agent bank (settlement coordinator) and the buyer must see the offer. The BORROWER and
+--   every OTHER lender are NOT stakeholders — so the price and the counterparties are invisible to
+--   the rest of the syndicate. This confidentiality is the whole point of a secondary trade.
+-- VISIBILITY CHECK: carries only seller/buyer/agentBank + notional/price. No third lender and no
+--   borrower can fetch, query, or observe it.
+template TradeProposal
+  with
+    facilityId : Text
+    seller : Lender
+    buyer : Lender
+    agentBank : AgentBank
+    -- | Notional of the (fully-drawn) slice being sold: reduces the seller's commitment AND drawn
+    -- by this amount, and raises the buyer's by the same. Invariant enforced on settle.
+    notional : Decimal
+    -- | Trade price in points of par (e.g. 99.25). Cash paid = notional * price / 100.
+    price : Decimal
+    currency : Text
+  where
+    signatory seller
+    observer agentBank, buyer
+    ensure notional > 0.0 && price > 0.0 && price <= 105.0
+
+    -- | The buyer accepts, producing a bilaterally-signed agreement the agent bank can settle.
+    choice Accept : ContractId TradeAgreed
+      controller buyer
+      do
+        create TradeAgreed with
+          facilityId; seller; buyer; agentBank; notional; price; currency
+
+    -- | The seller withdraws the offer before it is accepted.
+    choice Cancel : ()
+      controller seller
+      do pure ()
+
+-- | TradeAgreed — a bilaterally-agreed secondary trade, awaiting atomic settlement.
+--
+-- SIGNATORY: seller, buyer
+--   Both counterparties have consented to the terms; their joint authority (plus the agent bank as
+--   settlement controller) is exactly what's needed to move both positions and the cash at once.
+-- OBSERVER: agentBank
+--   The agent bank settles it. Still NO borrower and NO other lender — price/counterparties remain
+--   confidential right through settlement.
+template TradeAgreed
+  with
+    facilityId : Text
+    seller : Lender
+    buyer : Lender
+    agentBank : AgentBank
+    notional : Decimal
+    price : Decimal
+    currency : Text
+  where
+    signatory seller, buyer
+    observer agentBank
+
+    -- | Settle the trade: the position slice moves seller→buyer AND the cash moves buyer→seller in
+    -- ONE transaction. Authority here is {seller, buyer, agentBank} (the signatories plus the
+    -- controller), which authorises every create/archive below — no leg can move without the other.
+    choice SettleTrade : (ContractId LenderPosition, ContractId LenderPosition, ContractId Cash)
+      with
+        sellerPosCid : ContractId LenderPosition
+        buyerPosCid : ContractId LenderPosition
+        buyerCashCid : ContractId Cash
+      controller agentBank
+      do
+        sp <- fetch sellerPosCid
+        bp <- fetch buyerPosCid
+        bc <- fetch buyerCashCid
+        assertMsg "Seller position must match the trade" (sp.lender == seller && sp.facilityId == facilityId)
+        assertMsg "Buyer position must match the trade" (bp.lender == buyer && bp.facilityId == facilityId)
+        assertMsg "Both positions must share the agent bank" (sp.agentBank == agentBank && bp.agentBank == agentBank)
+        assertMsg "Cannot sell more than the seller's drawn slice" (notional <= sp.drawn)
+        assertMsg "Cannot sell more than the seller's commitment" (notional <= sp.commitment)
+        let proceeds = notional * price / 100.0
+        assertMsg "Buyer cash must be owned by the buyer" (bc.owner == buyer)
+        assertMsg "Buyer cash issuer must be the agent bank" (bc.issuer == agentBank)
+        assertMsg "Buyer cash is insufficient for the trade" (bc.amount >= proceeds)
+
+        -- cash leg: buyer pays the seller (change back to buyer if overfunded)
+        archive buyerCashCid
+        sellerCash <- create Cash with issuer = agentBank, owner = seller, amount = proceeds
+        if bc.amount > proceeds
+          then do
+            _ <- create Cash with issuer = agentBank, owner = buyer, amount = bc.amount - proceeds
+            pure ()
+          else pure ()
+
+        -- position leg: the slice moves seller→buyer (commitment + drawn), same transaction
+        archive sellerPosCid
+        archive buyerPosCid
+        newSellerPos <- create sp with
+          commitment = sp.commitment - notional
+          drawn = sp.drawn - notional
+        newBuyerPos <- create bp with
+          commitment = bp.commitment + notional
+          drawn = bp.drawn + notional
+        pure (newSellerPos, newBuyerPos, sellerCash)
