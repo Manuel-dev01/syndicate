@@ -44,5 +44,7 @@ npx tsx scripts/allocate-parties.ts
 #   daml damlc inspect-dar --json "$DAR_PATH" | jq -r .main_package_id
 npx tsx scripts/init-ledger.ts
 
+echo "==> Verify the privacy partition on the live ledger"
+npx tsx scripts/verify-privacy.ts
+
 echo "==> Done. Syndicate is live on Canton DevNet."
-echo "    Verify: curl \$LEDGER_JSON_API_URL/v2/packages   and   npx tsx scripts/verify-privacy.ts"

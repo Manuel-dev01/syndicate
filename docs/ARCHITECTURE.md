@@ -82,12 +82,28 @@ docs.digitalasset.com, docs.sync.global, and the cn-quickstart repo (2026-07).
 - Active contracts as AgentBank show the facility + 3 positions; a **lender token sees only its own
   position** — the privacy partition, on the real network.
 
-### LocalNet dry-run (recommended before DevNet)
-Splice **LocalNet** / **cn-quickstart** runs the whole Canton 3.x stack locally (Docker ~8 GB, no
-sponsor, `tap` for Canton Coin) — same JSON API v2 and same LF-2 DAR. Use it to validate the DAR
-upload + seed scripts end-to-end before the DevNet allowlist clears.
+### Local Canton dry-run (proven — do this before DevNet)
+The whole seed + verify pipeline is validated against a **real Canton 3.x participant** locally with
+`daml sandbox` (no Docker, no sponsor):
+```bash
+source scripts/daml-env.sh
+cd daml && daml build && \
+  daml sandbox --dar .daml/dist/syndicate-0.1.0.dar --json-api-port 7575 &   # JSON API v2, dev auth off
+cd .. && ( cd scripts && npm install )
+export LEDGER_JSON_API_URL=http://127.0.0.1:7575 LEDGER_JWT_SECRET=dev LEDGER_APP_USER=syndicate-app
+export DAML_PACKAGE_ID=$(daml damlc inspect-dar --json daml/.daml/dist/syndicate-0.1.0.dar | jq -r .main_package_id)
+scripts/node_modules/.bin/tsx scripts/allocate-parties.ts
+scripts/node_modules/.bin/tsx scripts/init-ledger.ts
+scripts/node_modules/.bin/tsx scripts/verify-privacy.ts   # asserts Lender A sees only its own slice
+```
+Verified result: agent bank sees `{Facility:1, LenderPosition:3, Cash:3}`; Lender A sees only
+`{LenderPosition:1, Cash:1}` — the partition holds on a real ledger, not just in Daml Script.
+DevNet reuses the exact same scripts against the sponsored validator's JSON API.
+
+For the **full Canton Network stack** locally (SV, wallet, Scan, Canton Coin `tap`) use Splice
+**LocalNet** / **cn-quickstart** (Docker ~8 GB) — same JSON API v2 and LF-2 DAR.
 Source: [LocalNet](https://docs.sync.global/app_dev/localnet.html),
-[cn-quickstart](https://github.com/digital-asset/cn-quickstart) (note: LocalNet-only since Jul 2025).
+[cn-quickstart](https://github.com/digital-asset/cn-quickstart) (LocalNet-only since Jul 2025).
 
 ## Toolchain & LF version
 

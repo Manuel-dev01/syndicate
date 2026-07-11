@@ -102,14 +102,13 @@ export async function submitAndWait(
   commands: unknown[],
   opts: { userId?: string; readAs?: string[] } = {},
 ): Promise<unknown> {
+  // Request body is a JsCommands object (flat) — see the participant's /docs/openapi.
   const body = {
-    commands: {
-      applicationId: APP_USER(),
-      commandId: `syndicate-${Date.now()}`,
-      actAs,
-      readAs: opts.readAs ?? [],
-      commands,
-    },
+    commands,
+    commandId: `syndicate-${Date.now()}`,
+    actAs,
+    readAs: opts.readAs ?? [],
+    userId: APP_USER(),
   };
   return api("/v2/commands/submit-and-wait", {
     method: "POST",
