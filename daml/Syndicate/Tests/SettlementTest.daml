@@ -17,7 +17,7 @@ import Syndicate.Settlement
 import Syndicate.Tests.Setup
 
 -- | Read a contract that `p` is entitled to see, failing the test if it isn't visible.
-mustSee : (Template t, HasAgreement t) => Party -> ContractId t -> Script t
+mustSee : (Template t, HasEnsure t) => Party -> ContractId t -> Script t
 mustSee p cid = fromSome <$> queryContractId p cid
 
 -- The standard $50M drawdown funding list for the demo scenario.

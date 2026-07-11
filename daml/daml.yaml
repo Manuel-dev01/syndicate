@@ -1,12 +1,11 @@
-# Syndicate — Daml project
-# Local dev/test is pinned to the Daml 2.10.4 LTS for a stable build/test loop.
-# The DevNet deploy targets the Canton 3.x line; the source below is written in the
-# portable Daml subset so it re-compiles cleanly under a 3.x SDK.
-sdk-version: 2.10.4
+# Syndicate — Daml project.
+# Built with Daml SDK 3.4.x → Daml-LF 2.x, the version Canton 3.x / DevNet accepts. The model is
+# written in the portable subset; the 2.x→3.x delta is a few Daml Script API fixes (see git log).
+sdk-version: 3.4.11
 name: syndicate
 version: 0.1.0
 source: .
-# Test scripts are co-located under Syndicate/Tests (one source root per Daml 2.x project).
+# Test scripts are co-located under Syndicate/Tests (one source root per project).
 dependencies:
   - daml-prim
   - daml-stdlib
