@@ -8,23 +8,26 @@
  * Run:  LEDGER_JSON_API_URL=… LEDGER_JWT_SECRET=… npx tsx scripts/allocate-parties.ts
  */
 import { writeFile } from "node:fs/promises";
-import { allocateParty, grantUserRights } from "./lib/jsonLedger";
+import { allocateParty, grantActAs } from "./lib/jsonLedger";
 
+// Distinctive hints so they don't clash with other teams on the shared validator.
 const HINTS = {
-  borrower: "syndicate-borrower-1",
-  agentBank: "syndicate-agentbank-1",
-  agent: "syndicate-copilot-1",
-  lenderA: "syndicate-lenderA-1",
-  lenderB: "syndicate-lenderB-1",
-  lenderC: "syndicate-lenderC-1",
+  borrower: "synMerBorrower",
+  agentBank: "synMerAgentBank",
+  agent: "synMerCoPilot",
+  lenderA: "synMerLenderA",
+  lenderB: "synMerLenderB",
+  lenderC: "synMerLenderC",
 } as const;
 
 async function main() {
+  const appUser = process.env.LEDGER_APP_USER ?? "syndicate-app";
   const parties: Record<string, string> = {};
   for (const [role, hint] of Object.entries(HINTS)) {
     const party = await allocateParty(hint);
     parties[role] = party;
-    await grantUserRights(process.env.LEDGER_APP_USER ?? "syndicate-app", party);
+    // Grant the shared ledger user actAs (and thus readAs) over this party.
+    await grantActAs(appUser, party);
     // eslint-disable-next-line no-console
     console.log(`${role.padEnd(10)} ${party}`);
   }

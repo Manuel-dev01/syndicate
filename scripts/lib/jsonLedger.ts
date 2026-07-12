@@ -1,19 +1,18 @@
 /**
  * jsonLedger.ts — a tiny client for the Canton 3.x JSON Ledger API v2.
  *
- * Canton 3.x exposes the JSON Ledger API in-process (default port 7575, endpoints under /v2/*).
- * This wraps the handful of calls Syndicate needs — allocate party, upload DAR, submit a command,
- * read active contracts — plus a dependency-free HS256 JWT signer for party-scoped dev tokens.
+ * Targets the hackathon's shared Canton DevNet validator (Seaport / fivenorth), which authenticates
+ * with an OIDC client-credentials (M2M) token, and also works against a local `daml sandbox`
+ * (HS256 dev token) as a fallback. Wraps the handful of calls Syndicate needs: allocate party,
+ * grant the ledger user actAs rights, upload a DAR, submit a command, read active contracts.
  *
  * Docs: https://docs.digitalasset.com/build/3.5/tutorials/json-api/canton_and_the_json_ledger_api.html
- * Auth: https://docs.digitalasset.com/operate/3.5/howtos/secure/apis/jwt.html
- *
- * No hardcoded hosts — everything comes from the environment (see .env.example).
+ * No hardcoded hosts or secrets — everything comes from the environment (see .env.example).
  */
 import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-const BASE = () => required("LEDGER_JSON_API_URL"); // e.g. https://participant.example:7575
+const BASE = () => required("LEDGER_JSON_API_URL").replace(/\/$/, "");
 const APP_USER = () => process.env.LEDGER_APP_USER ?? "syndicate-app";
 
 function required(name: string): string {
@@ -26,63 +25,73 @@ function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-/**
- * Mint an HS256 dev JWT for a given ledger user. The participant maps user -> actAs/readAs parties,
- * so the token authenticates `sub` (the user id) and the command body carries the parties.
- * DevNet/LocalNet accept a shared-secret HS256 token; production uses a real issuer.
- */
-export function mintToken(userId: string = APP_USER()): string {
+// ---- Auth: OIDC client-credentials (shared validator) or HS256 dev token (local sandbox) ----
+
+let cached: { token: string; exp: number } | null = null;
+
+async function fetchOidcToken(): Promise<string> {
+  const now = Date.now();
+  if (cached && cached.exp - 60_000 > now) return cached.token;
+  const form = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: required("LEDGER_OIDC_CLIENT_ID"),
+    client_secret: required("LEDGER_OIDC_CLIENT_SECRET"),
+    audience: process.env.LEDGER_OIDC_AUDIENCE ?? required("LEDGER_OIDC_CLIENT_ID"),
+    scope: process.env.LEDGER_OIDC_SCOPE ?? "daml_ledger_api",
+  });
+  const res = await fetch(required("LEDGER_OIDC_TOKEN_URL"), {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: form,
+  });
+  const body = (await res.json()) as { access_token?: string; expires_in?: number; error?: string };
+  if (!res.ok || !body.access_token) throw new Error(`OIDC token exchange failed: ${JSON.stringify(body)}`);
+  cached = { token: body.access_token, exp: now + (body.expires_in ?? 3600) * 1000 };
+  return cached.token;
+}
+
+function mintHs256(): string {
   const secret = required("LEDGER_JWT_SECRET");
   const header = { alg: "HS256", typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
-  const payload: Record<string, unknown> = {
-    sub: userId,
-    scope: process.env.LEDGER_JWT_SCOPE ?? "daml_ledger_api",
-    aud: process.env.LEDGER_JWT_AUDIENCE, // optional audience-based mode
-    iat: now,
-    exp: now + 3600,
-  };
-  const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
-  const sig = b64url(createHmac("sha256", secret).update(signingInput).digest());
-  return `${signingInput}.${sig}`;
+  const payload = { sub: APP_USER(), scope: "daml_ledger_api", iat: now, exp: now + 3600 };
+  const input = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
+  return `${input}.${b64url(createHmac("sha256", secret).update(input).digest())}`;
 }
 
-async function api<T>(path: string, init: RequestInit & { userId?: string } = {}): Promise<T> {
-  const { userId, headers, ...rest } = init;
+/** Bearer token for the Ledger API — OIDC when configured, else a local HS256 dev token. */
+export async function getToken(): Promise<string> {
+  return process.env.LEDGER_OIDC_CLIENT_ID ? fetchOidcToken() : mintHs256();
+}
+
+async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE()}${path}`, {
-    ...rest,
-    headers: {
-      authorization: `Bearer ${mintToken(userId)}`,
-      ...headers,
-    },
+    ...init,
+    headers: { authorization: `Bearer ${await getToken()}`, ...init.headers },
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`${init.method ?? "GET"} ${path} → ${res.status}: ${text.slice(0, 400)}`);
   return (text ? JSON.parse(text) : {}) as T;
 }
 
-/** Allocate a party; returns the full `hint::fingerprint` id. Idempotent on retry (hint clash → reuse). */
+// ---- Ledger operations ----
+
+/** Allocate a party; returns the full `hint::fingerprint` id. */
 export async function allocateParty(partyIdHint: string): Promise<string> {
-  const body = { partyIdHint, identityProviderId: "" };
   const out = await api<{ partyDetails: { party: string } }>("/v2/parties", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ partyIdHint, identityProviderId: "" }),
   });
   return out.partyDetails.party;
 }
 
-/** Grant a ledger user actAs/readAs rights over a party (so its JWT can act as that party). */
-export async function grantUserRights(userId: string, party: string): Promise<void> {
-  await api("/v2/users", {
+/** Grant the ledger user CanActAs a party, so its token can act/read as that party. */
+export async function grantActAs(userId: string, party: string): Promise<void> {
+  await api(`/v2/users/${encodeURIComponent(userId)}/rights`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      user: { id: userId, primaryParty: party },
-      rights: [{ kind: { CanActAs: { value: { party } } } }],
-    }),
-  }).catch(() => {
-    /* user may already exist; rights endpoint variants differ by patch — ignore for the demo seed */
+    body: JSON.stringify({ userId, rights: [{ kind: { CanActAs: { value: { party } } } }] }),
   });
 }
 
@@ -96,44 +105,41 @@ export async function uploadDar(darPath: string): Promise<void> {
   });
 }
 
-/** Submit-and-wait for a set of commands acting as `actAs`. `commands` are JSON API v2 Command objects. */
+/** Submit-and-wait for a set of JSON API v2 Command objects, acting as `actAs`. */
 export async function submitAndWait(
   actAs: string[],
   commands: unknown[],
   opts: { userId?: string; readAs?: string[] } = {},
-): Promise<unknown> {
-  // Request body is a JsCommands object (flat) — see the participant's /docs/openapi.
-  const body = {
-    commands,
-    commandId: `syndicate-${Date.now()}`,
-    actAs,
-    readAs: opts.readAs ?? [],
-    userId: APP_USER(),
-  };
+): Promise<{ updateId?: string; completionOffset?: number }> {
   return api("/v2/commands/submit-and-wait", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    userId: opts.userId,
+    body: JSON.stringify({
+      commands,
+      commandId: `syndicate-${Date.now()}`,
+      actAs,
+      readAs: opts.readAs ?? [],
+      userId: opts.userId ?? APP_USER(),
+    }),
   });
 }
 
-/** A JSON API v2 CreateCommand for a template `packageId:Module:Entity` with a record payload. */
+/** A JSON API v2 CreateCommand. Note: this validator encodes Int and Numeric fields as STRINGS. */
 export function createCommand(templateId: string, payload: Record<string, unknown>): unknown {
   return { CreateCommand: { templateId, createArguments: payload } };
 }
 
-/** Read active contracts visible to `party` (privacy proof: a lender sees only its own). */
-export async function activeContracts(party: string): Promise<unknown> {
-  const ledgerEnd = await api<{ offset: number }>("/v2/state/ledger-end", { userId: party });
-  return api("/v2/state/active-contracts", {
+/** Read active contracts a party is a stakeholder of (privacy proof: a lender sees only its own). */
+export async function activeContracts(party: string): Promise<unknown[]> {
+  const end = await api<{ offset: number }>("/v2/state/ledger-end");
+  const res = await api<unknown[]>("/v2/state/active-contracts", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       filter: { filtersByParty: { [party]: {} } },
-      verbose: true,
-      activeAtOffset: ledgerEnd.offset,
+      verbose: false,
+      activeAtOffset: end.offset,
     }),
-    userId: party,
   });
+  return Array.isArray(res) ? res : [];
 }

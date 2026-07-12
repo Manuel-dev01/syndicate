@@ -85,14 +85,26 @@ configured via environment variables.
 
 ## Live deployment
 
-**Live:** https://syndicate-delta.vercel.app — landing page and the **deal-spine product** (`/app`).
+**Live on Canton DevNet.** The Daml model (LF-2, SDK 3.4.11) is uploaded to the hackathon's shared
+Canton DevNet validator and **real contracts are running on-ledger** — created and queried over the
+JSON Ledger API v2 (`https://ledger-api.validator.devnet.sandbox.fivenorth.io/v2/*`, OIDC auth).
+Reproduce with `bash scripts/deploy-shared.sh` (config in `.env`), or verify directly:
 
-The product reads from a backend typed to the Daml model (`Facility` / `LenderPosition` / `Cash` /
-`Settlement`): the privacy partition is enforced server-side (a lender sees only its own position;
-others are sealed), settlements move both legs atomically or reject whole, and the Agent-Bank
-Co-Pilot reasons over the borrower's private data via an LLM. The data layer is abstracted so the
-live **Canton DevNet** ledger replaces it through the JSON Ledger API with no UI change. The
-architecture is DevNet-ready from day one.
+```bash
+# active contracts our agent-bank party is a stakeholder of, on DevNet
+curl $LEDGER_JSON_API_URL/v2/state/active-contracts -H "Authorization: Bearer $TOKEN" ...
+# → Facility, Cash, DrawdownRequest (live)
+```
+
+**Frontend:** https://syndicate-delta.vercel.app — landing + the **deal-spine product** (`/app`),
+typed to the same Daml model (`Facility` / `LenderPosition` / `Cash` / `Settlement`): per-lender
+privacy, atomic both-legs settlement, and the DeepSeek Agent-Bank Co-Pilot. Its data layer swaps to
+the DevNet JSON Ledger API with no UI change.
+
+> The full multi-lender lifecycle on DevNet needs a few more `actAs` grants than the shared M2M
+> user currently allows (`TOO_MANY_USER_RIGHTS`); the seed scripts run it end-to-end the moment a
+> dedicated ledger user / org grant is available. Locally, all five lifecycle stages + the
+> privacy/atomicity assertions pass on a real Canton participant (`daml test`, sandbox dry-run).
 
 ---
 

@@ -19,10 +19,10 @@ const PKG = () => {
 const tid = (moduleEntity: string) => `${PKG()}:${moduleEntity}`;
 
 const FACILITY_ID = "MER-2031-B";
-const RATE_BPS = 850;
+const RATE_BPS = "850"; // Int64 fields are encoded as strings on this JSON Ledger API
 const MATURITY = "2031-06-30";
 const CURRENCY = "USD";
-const dec = (n: number) => n.toFixed(1); // Daml Numeric encodes as a string on the JSON API
+const dec = (n: number) => n.toFixed(1); // Numeric fields are encoded as strings too
 
 interface Parties {
   borrower: string;
