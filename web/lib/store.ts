@@ -197,7 +197,11 @@ function appendSlot(
   return rec;
 }
 
+// The interest lifecycle node is FACILITY-level (shared by every role's view), so only mark it
+// distributed once EVERY lender's accrual has actually been paid out — otherwise one lender settling
+// its own slice would flip the shared spine to "Q2 distributed" while others still carry accrual.
 function markInterestDone(s: LedgerStore): void {
+  if (!s.lenders.every((l) => l.position.accruedInterest === 0)) return;
   const node = s.lifecycle.find((n) => n.key === "interest");
   if (node) {
     node.done = true;
@@ -228,11 +232,9 @@ export function applyFacilityDrawdown(s: LedgerStore, facilityAmount: number): S
     p.l.position.drawn = round(p.l.position.drawn + p.share);
     appendSlot(s, p.l, "drawdown", `Drawdown · $${fmtM(facilityAmount)} facility`, -p.share, p.share);
   }
-  s.facilityLog = [
-    mkRecord(s.seq++, "drawdown", `Facility drawdown · $${fmtM(facilityAmount)}`, -facilityAmount, facilityAmount, "settled", today()),
-    ...s.facilityLog,
-  ];
-  return mkRecord(s.seq++, "drawdown", `Facility drawdown · $${fmtM(facilityAmount)}`, -facilityAmount, facilityAmount, "settled", today());
+  const rec = mkRecord(s.seq++, "drawdown", `Facility drawdown · $${fmtM(facilityAmount)}`, -facilityAmount, facilityAmount, "settled", today());
+  s.facilityLog = [rec, ...s.facilityLog];
+  return rec;
 }
 
 /** Interest: distribute one lender's accrued receivable. Cash + and accrual retired to 0 together. */
@@ -258,7 +260,9 @@ export function applyFacilityInterest(s: LedgerStore): SettlementRecord {
   }
   if (!(total > 0)) throw new SettlementError("No accrued interest to distribute.");
   markInterestDone(s);
-  return mkRecord(s.seq++, "interest", "Facility interest · Q2 pro-rata", round(total), 0, "settled", today());
+  const rec = mkRecord(s.seq++, "interest", "Facility interest · Q2 pro-rata", round(total), 0, "settled", today());
+  s.facilityLog = [rec, ...s.facilityLog];
+  return rec;
 }
 
 /** Repayment: principal returns to one lender pro-rata. Cash + and drawn − together. */
@@ -282,11 +286,9 @@ export function applyFacilityRepayment(s: LedgerStore, facilityAmount: number): 
     p.l.position.drawn = round(p.l.position.drawn - p.share);
     appendSlot(s, p.l, "repayment", "Scheduled amortization", p.share, -p.share);
   }
-  s.facilityLog = [
-    mkRecord(s.seq++, "repayment", `Facility amortization · $${fmtM(facilityAmount)}`, facilityAmount, -facilityAmount, "settled", today()),
-    ...s.facilityLog,
-  ];
-  return mkRecord(s.seq++, "repayment", `Facility amortization · $${fmtM(facilityAmount)}`, facilityAmount, -facilityAmount, "settled", today());
+  const rec = mkRecord(s.seq++, "repayment", `Facility amortization · $${fmtM(facilityAmount)}`, facilityAmount, -facilityAmount, "settled", today());
+  s.facilityLog = [rec, ...s.facilityLog];
+  return rec;
 }
 
 /** Secondary DvP: a lender sells a slice. Slice leaves the seller and cash arrives together; the
@@ -301,9 +303,11 @@ export function applySecondary(s: LedgerStore, slot: LenderSlot, notional: numbe
   const buyer = s.lenders.find((l) => l !== slot && !l.role) ?? s.lenders.find((l) => l !== slot);
   slot.position.drawn = round(slot.position.drawn - notional);
   slot.position.commitment = round(slot.position.commitment - notional);
+  slot.position.holdPct = pctOf(slot.position.commitment);
   if (buyer) {
     buyer.position.drawn = round(buyer.position.drawn + notional);
     buyer.position.commitment = round(buyer.position.commitment + notional);
+    buyer.position.holdPct = pctOf(buyer.position.commitment);
   }
   return appendSlot(
     s,
@@ -317,6 +321,11 @@ export function applySecondary(s: LedgerStore, slot: LenderSlot, notional: numbe
 
 function round(n: number): number {
   return Math.round(n);
+}
+// A lender's hold % is its share of the total facility commitment — kept in sync whenever a slice
+// moves (e.g. a secondary trade), so the loan tape's Hold and Commitment columns always reconcile.
+function pctOf(commitment: number): number {
+  return Math.round((commitment / TOTAL) * 1000) / 10;
 }
 function fmtM(n: number): string {
   return (n / M).toFixed(n % M === 0 ? 1 : 2) + "M";

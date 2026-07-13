@@ -14,7 +14,7 @@ interface DevnetContract {
 
 let cached: { token: string; exp: number } | null = null;
 
-async function oidcToken(): Promise<string> {
+async function oidcToken(signal: AbortSignal): Promise<string> {
   const now = Date.now();
   if (cached && cached.exp - 60_000 > now) return cached.token;
   const url = process.env.DEVNET_OIDC_TOKEN_URL!;
@@ -29,6 +29,7 @@ async function oidcToken(): Promise<string> {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: form,
+    signal,
   });
   const body = (await res.json()) as { access_token?: string; expires_in?: number };
   if (!res.ok || !body.access_token) throw new Error("OIDC token exchange failed");
@@ -42,10 +43,15 @@ export async function GET() {
   if (!base || !party || !process.env.DEVNET_OIDC_CLIENT_SECRET) {
     return NextResponse.json({ ok: false });
   }
+  // Bound every external call: a slow/unresponsive validator or OIDC endpoint must degrade to
+  // { ok: false } (the banner self-hides) quickly, never hang the serverless invocation. Mirrors
+  // the co-pilot route's AbortController guard.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8_000);
   try {
-    const token = await oidcToken();
+    const token = await oidcToken(ctrl.signal);
     const auth = { authorization: `Bearer ${token}` };
-    const end = (await (await fetch(`${base}/v2/state/ledger-end`, { headers: auth })).json()) as {
+    const end = (await (await fetch(`${base}/v2/state/ledger-end`, { headers: auth, signal: ctrl.signal })).json()) as {
       offset: number;
     };
     const acs = (await (
@@ -57,6 +63,7 @@ export async function GET() {
           verbose: false,
           activeAtOffset: end.offset,
         }),
+        signal: ctrl.signal,
       })
     ).json()) as unknown[];
 
@@ -79,5 +86,7 @@ export async function GET() {
     });
   } catch {
     return NextResponse.json({ ok: false });
+  } finally {
+    clearTimeout(timer);
   }
 }

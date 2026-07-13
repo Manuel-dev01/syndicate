@@ -110,7 +110,7 @@ const STATIC: Record<string, Omit<Proposal, "source">> = {
   maturity: {
     tag: "Payoff projection",
     tone: "propose",
-    body: "At the current trajectory the facility retires fully on 2031-06-30. Projected IRR to the slice is 11.8%.",
+    body: "At the current trajectory the facility retires fully on 2031-06-30 — every leg along the way settled atomically.",
     assessment: { decision: "allow", choice: "none", rationale: "On-track payoff projection.", overridden: false },
   },
 };

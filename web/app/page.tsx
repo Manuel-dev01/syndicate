@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { DevNetBanner } from "@/components/DevNetBanner";
+import { useIsMobile } from "@/lib/useIsMobile";
 
 const INK = "#0a0a0a";
 const MINT = "#16d97f";
@@ -13,6 +14,7 @@ const TICKER =
 const MARQ = "ONE FACILITY · YOUR SLICE ONLY · ATOMIC SETTLEMENT · ";
 
 export default function Landing() {
+  const isMobile = useIsMobile();
   const [progress, setProgress] = useState("4%");
   useEffect(() => {
     const onScroll = () => {
@@ -25,6 +27,8 @@ export default function Landing() {
     onScroll();
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  const railW = isMobile ? 44 : 58;
 
   return (
     <div style={{ position: "relative", minHeight: "100vh", overflowX: "hidden" }}>
@@ -64,7 +68,7 @@ export default function Landing() {
           position: "fixed",
           top: 0,
           left: 0,
-          width: 58,
+          width: railW,
           height: "100vh",
           background: "#fff",
           borderRight: `2px solid ${INK}`,
@@ -83,7 +87,7 @@ export default function Landing() {
             transform: "rotate(180deg)",
             fontWeight: 700,
             letterSpacing: ".42em",
-            fontSize: 13,
+            fontSize: isMobile ? 11 : 13,
           }}
         >
           SYNDICATE
@@ -97,16 +101,16 @@ export default function Landing() {
       </div>
 
       {/* MAIN */}
-      <div style={{ marginLeft: 58 }}>
+      <div style={{ marginLeft: railW }}>
         <DevNetBanner />
-        <Hero />
+        <Hero isMobile={isMobile} />
         <Marquee />
-        <PrivacySlice />
-        <AtomicFilm />
-        <WhyCanton />
-        <DealSpinePreview />
-        <AgentCopilot />
-        <CTA />
+        <PrivacySlice isMobile={isMobile} />
+        <AtomicFilm isMobile={isMobile} />
+        <WhyCanton isMobile={isMobile} />
+        <DealSpinePreview isMobile={isMobile} />
+        <AgentCopilot isMobile={isMobile} />
+        <CTA isMobile={isMobile} />
         <Footer />
       </div>
     </div>
@@ -125,7 +129,7 @@ function Logo({ light = false }: { light?: boolean }) {
   );
 }
 
-function Hero() {
+function Hero({ isMobile }: { isMobile: boolean }) {
   return (
     <section style={{ position: "relative", borderBottom: `2px solid ${INK}`, overflow: "hidden" }}>
       <div
@@ -134,14 +138,16 @@ function Hero() {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          padding: "18px 40px",
+          gap: 12,
+          flexWrap: "wrap",
+          padding: isMobile ? "14px 20px" : "18px 40px",
           borderBottom: "1px solid #e4e4e0",
           fontSize: 11,
           letterSpacing: ".14em",
           textTransform: "uppercase",
         }}
       >
-        <div style={{ display: "flex", gap: 26 }}>
+        <div style={{ display: "flex", gap: isMobile ? 12 : 26, flexWrap: "wrap" }}>
           <span>Facility OS</span>
           <span style={{ color: "#999" }}>·</span>
           <span>Confidential by design</span>
@@ -152,25 +158,25 @@ function Hero() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.35fr .9fr", minHeight: 560 }}>
-        <div style={{ padding: "54px 40px 48px", display: "flex", flexDirection: "column", justifyContent: "center", borderRight: `2px solid ${INK}` }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.35fr .9fr", minHeight: isMobile ? "auto" : 560 }}>
+        <div style={{ padding: isMobile ? "36px 20px 40px" : "54px 40px 48px", display: "flex", flexDirection: "column", justifyContent: "center", borderRight: isMobile ? undefined : `2px solid ${INK}` }}>
           <div className="font-mono" style={{ fontSize: 12, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 22 }}>
             Syndicated lending · on Canton
           </div>
-          <h1 style={{ margin: 0, fontWeight: 700, fontSize: 118, lineHeight: 0.84, letterSpacing: "-.05em", textTransform: "uppercase" }}>
+          <h1 style={{ margin: 0, fontWeight: 700, fontSize: "clamp(44px, 13vw, 118px)", lineHeight: 0.84, letterSpacing: "-.05em", textTransform: "uppercase" }}>
             Settle<br />
             <span style={{ display: "inline-block", color: MINT }}>atomic&#8203;</span>
             <br />
             <span style={{ display: "inline-flex", alignItems: "flex-end", gap: 18 }}>
               ally.
-              <span style={{ width: 120, height: 14, background: INK, display: "inline-block", marginBottom: 18 }} />
+              {!isMobile && <span style={{ width: 120, height: 14, background: INK, display: "inline-block", marginBottom: 18 }} />}
             </span>
           </h1>
           <p style={{ margin: "34px 0 0", maxWidth: 430, fontSize: 17, lineHeight: 1.5, color: "#333" }}>
             Multiple competing lenders. One shared facility. Each sees only its own slice — and every cash-vs-position move
             clears in a single, indivisible transaction.
           </p>
-          <div style={{ marginTop: 34, display: "flex", border: `2px solid ${INK}`, width: "max-content" }}>
+          <div style={{ marginTop: 34, display: "flex", border: `2px solid ${INK}`, width: "max-content", maxWidth: "100%", flexWrap: "wrap" }}>
             <Link href="/app" style={{ padding: "15px 26px", background: INK, color: "#fff", fontWeight: 700, fontSize: 13, letterSpacing: ".04em", textTransform: "uppercase" }}>
               Enter the product
             </Link>
@@ -180,7 +186,7 @@ function Hero() {
           </div>
         </div>
 
-        <FacilityCube />
+        {!isMobile && <FacilityCube />}
       </div>
     </section>
   );
@@ -188,7 +194,7 @@ function Hero() {
 
 function FacilityCube() {
   return (
-    <div style={{ position: "relative", background: PAPER, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+    <div style={{ position: "relative", background: PAPER, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", minHeight: 360 }}>
       <div className="font-mono" style={{ position: "absolute", top: 18, left: 18, fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "#666" }}>
         Facility · $480M
       </div>
@@ -229,13 +235,13 @@ function Marquee() {
   );
 }
 
-function PrivacySlice() {
+function PrivacySlice({ isMobile }: { isMobile: boolean }) {
   const sealed = ["█████", "███", "████", "██████", "██"];
   return (
-    <section style={{ borderBottom: `2px solid ${INK}`, display: "grid", gridTemplateColumns: ".9fr 1.1fr" }}>
-      <div style={{ padding: "54px 40px", borderRight: `2px solid ${INK}` }}>
+    <section style={{ borderBottom: `2px solid ${INK}`, display: "grid", gridTemplateColumns: isMobile ? "1fr" : ".9fr 1.1fr" }}>
+      <div style={{ padding: isMobile ? "40px 20px" : "54px 40px", borderRight: isMobile ? undefined : `2px solid ${INK}`, borderBottom: isMobile ? `2px solid ${INK}` : undefined }}>
         <div className="font-mono" style={{ fontSize: 12, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#666" }}>01 / Privacy</div>
-        <h2 style={{ margin: "18px 0 0", fontWeight: 700, fontSize: 54, lineHeight: 0.92, letterSpacing: "-.035em", textTransform: "uppercase" }}>
+        <h2 style={{ margin: "18px 0 0", fontWeight: 700, fontSize: "clamp(38px, 9vw, 54px)", lineHeight: 0.92, letterSpacing: "-.035em", textTransform: "uppercase" }}>
           You see<br />only your<br />slice.
         </h2>
         <p style={{ margin: "26px 0 0", maxWidth: 380, fontSize: 16, lineHeight: 1.55, color: "#333" }}>
@@ -248,9 +254,9 @@ function PrivacySlice() {
           <div>→ Borrower financials stay need-to-know</div>
         </div>
       </div>
-      <div style={{ padding: 40, background: PAPER, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ padding: isMobile ? "32px 20px" : 40, background: PAPER, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ width: "100%", maxWidth: 460 }}>
-          <div className="font-mono" style={{ display: "flex", justifyContent: "space-between", fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "#666", marginBottom: 14 }}>
+          <div className="font-mono" style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "#666", marginBottom: 14 }}>
             <span>Meridian Logistics · Tranche B</span>
             <span>6 participants</span>
           </div>
@@ -278,13 +284,13 @@ function PrivacySlice() {
   );
 }
 
-function AtomicFilm() {
+function AtomicFilm({ isMobile }: { isMobile: boolean }) {
   return (
-    <section id="flow" style={{ background: INK, color: PAPER, borderBottom: `2px solid ${INK}`, padding: "54px 40px" }}>
+    <section id="flow" style={{ background: INK, color: PAPER, borderBottom: `2px solid ${INK}`, padding: isMobile ? "40px 20px" : "54px 40px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 20 }}>
         <div>
           <div className="font-mono" style={{ fontSize: 12, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: MINT }}>02 / Atomicity</div>
-          <h2 style={{ margin: "16px 0 0", fontWeight: 700, fontSize: 54, lineHeight: 0.92, letterSpacing: "-.035em", textTransform: "uppercase" }}>
+          <h2 style={{ margin: "16px 0 0", fontWeight: 700, fontSize: "clamp(34px, 8vw, 54px)", lineHeight: 0.92, letterSpacing: "-.035em", textTransform: "uppercase" }}>
             Cash and position,<br />one transaction.
           </h2>
         </div>
@@ -314,15 +320,15 @@ function AtomicFilm() {
         </div>
       </div>
 
-      <div style={{ marginTop: 30, display: "grid", gridTemplateColumns: "repeat(4,1fr)", border: "2px solid #2a2a2a" }}>
+      <div style={{ marginTop: 30, display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)", border: "2px solid #2a2a2a" }}>
         {[
           ["Drawdowns", "Borrower draws, lender cash debits — atomic.", MINT],
           ["Interest", "Accrual + distribution by pro-rata slice.", PAPER],
           ["Repay", "Principal returns flow to each holder.", PAPER],
           ["Trades", "Secondary lender-to-lender, DvP.", MINT],
         ].map(([t, d, c], i) => (
-          <div key={i} style={{ padding: 22, borderRight: i < 3 ? "2px solid #2a2a2a" : undefined }}>
-            <div style={{ fontWeight: 700, fontSize: 34, letterSpacing: "-.03em", color: c as string }}>{t}</div>
+          <div key={i} style={{ padding: 22, borderRight: !isMobile && i < 3 ? "2px solid #2a2a2a" : undefined, borderBottom: isMobile && i < 2 ? "2px solid #2a2a2a" : undefined }}>
+            <div style={{ fontWeight: 700, fontSize: 30, letterSpacing: "-.03em", color: c as string }}>{t}</div>
             <div className="font-mono" style={{ marginTop: 8, fontSize: 11, color: "#9a9a96", lineHeight: 1.5 }}>{d}</div>
           </div>
         ))}
@@ -331,26 +337,26 @@ function AtomicFilm() {
   );
 }
 
-function WhyCanton() {
+function WhyCanton({ isMobile }: { isMobile: boolean }) {
   const stats: [string, string, boolean][] = [
-    ["$1.7T+", "Private credit market still run on spreadsheets, email and manual agent banks.", false],
+    ["$2.1T", "Private credit reached ~$2.1 trillion in 2023 (IMF) — still run on spreadsheets, email and manual agent banks.", false],
     ["0", "Settlement breaks. Both legs commit together or the transaction never happened.", true],
-    ["T+0", "Reconciliation collapses from weeks to a single indivisible ledger move.", false],
+    ["T+0", "Reconciliation collapses from the T+7–T+20 loan-market standard to a single indivisible ledger move.", false],
   ];
   return (
     <section style={{ borderBottom: `2px solid ${INK}` }}>
-      <div style={{ padding: 40, borderBottom: `2px solid ${INK}`, display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 16 }}>
-        <h2 style={{ margin: 0, fontWeight: 700, fontSize: 46, letterSpacing: "-.035em", textTransform: "uppercase" }}>
+      <div style={{ padding: isMobile ? "32px 20px" : 40, borderBottom: `2px solid ${INK}`, display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 16 }}>
+        <h2 style={{ margin: 0, fontWeight: 700, fontSize: "clamp(32px, 7vw, 46px)", letterSpacing: "-.035em", textTransform: "uppercase" }}>
           Why it can only<br />be built on Canton
         </h2>
-        <div className="font-mono" style={{ fontSize: 12, letterSpacing: ".1em", textTransform: "uppercase", color: "#666", maxWidth: 300, textAlign: "right" }}>
+        <div className="font-mono" style={{ fontSize: 12, letterSpacing: ".1em", textTransform: "uppercase", color: "#666", maxWidth: 300, textAlign: isMobile ? "left" : "right" }}>
           Privacy and atomicity pull against each other on every other infrastructure.
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)" }}>
         {stats.map(([n, d, accent], i) => (
-          <div key={i} style={{ padding: 40, borderRight: i < 2 ? `2px solid ${INK}` : undefined }}>
-            <div style={{ fontWeight: 700, fontSize: 72, letterSpacing: "-.05em", lineHeight: 1, color: accent ? MINT : INK }}>{n}</div>
+          <div key={i} style={{ padding: isMobile ? "28px 20px" : 40, borderRight: !isMobile && i < 2 ? `2px solid ${INK}` : undefined, borderBottom: isMobile && i < 2 ? `2px solid ${INK}` : undefined }}>
+            <div style={{ fontWeight: 700, fontSize: "clamp(52px, 13vw, 72px)", letterSpacing: "-.05em", lineHeight: 1, color: accent ? MINT : INK }}>{n}</div>
             <div className="font-mono" style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, color: "#333" }}>{d}</div>
           </div>
         ))}
@@ -359,13 +365,13 @@ function WhyCanton() {
   );
 }
 
-function DealSpinePreview() {
+function DealSpinePreview({ isMobile }: { isMobile: boolean }) {
   return (
-    <section style={{ background: PAPER, borderBottom: `2px solid ${INK}`, padding: "54px 40px" }}>
+    <section style={{ background: PAPER, borderBottom: `2px solid ${INK}`, padding: isMobile ? "40px 20px" : "54px 40px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 20, marginBottom: 34 }}>
         <div>
           <div className="font-mono" style={{ fontSize: 12, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#666" }}>Inside the OS</div>
-          <h2 style={{ margin: "16px 0 0", fontWeight: 700, fontSize: 54, lineHeight: 0.92, letterSpacing: "-.035em", textTransform: "uppercase" }}>
+          <h2 style={{ margin: "16px 0 0", fontWeight: 700, fontSize: "clamp(34px, 8vw, 54px)", lineHeight: 0.92, letterSpacing: "-.035em", textTransform: "uppercase" }}>
             Navigate the deal,<br />not a dashboard.
           </h2>
         </div>
@@ -376,8 +382,8 @@ function DealSpinePreview() {
       </div>
 
       <div style={{ border: `2px solid ${INK}`, background: "#fff", boxShadow: "0 8px 40px rgba(0,0,0,.16)", overflow: "hidden" }}>
-        <div style={{ height: 54, borderBottom: `2px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <div style={{ minHeight: 54, borderBottom: `2px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
               <Logo />
               <span style={{ fontWeight: 700, letterSpacing: "-.02em", fontSize: 15 }}>SYNDICATE</span>
@@ -393,10 +399,10 @@ function DealSpinePreview() {
             Ledger live
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "248px 1fr 286px" }}>
-          <div style={{ borderRight: `2px solid ${INK}`, background: "#fafaf8", padding: "24px 22px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "248px 1fr 286px" }}>
+          <div style={{ borderRight: isMobile ? undefined : `2px solid ${INK}`, borderBottom: isMobile ? `2px solid ${INK}` : undefined, background: "#fafaf8", padding: "24px 22px" }}>
             <div className="font-mono" style={{ fontSize: 10, letterSpacing: ".16em", textTransform: "uppercase", color: "#666" }}>Deal lifecycle</div>
-            <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 15 }}>
+            <div style={{ marginTop: 22, display: "flex", flexDirection: isMobile ? "row" : "column", flexWrap: "wrap", gap: 15 }}>
               {[
                 ["Origination", false, true],
                 ["Drawdown", false, true],
@@ -409,7 +415,7 @@ function DealSpinePreview() {
                   <div
                     style={
                       active
-                        ? { width: 24, height: 24, background: MINT, border: `3px solid ${INK}`, flex: "0 0 auto", marginLeft: -4 }
+                        ? { width: 24, height: 24, background: MINT, border: `3px solid ${INK}`, flex: "0 0 auto", marginLeft: isMobile ? 0 : -4 }
                         : done
                           ? { width: 16, height: 16, background: INK, flex: "0 0 auto" }
                           : { width: 16, height: 16, border: "2px solid #999", background: "#fff", flex: "0 0 auto" }
@@ -417,7 +423,7 @@ function DealSpinePreview() {
                   />
                   <div>
                     <div style={{ fontWeight: 700, fontSize: active ? 18 : 14, letterSpacing: active ? "-.01em" : undefined }}>{l}</div>
-                    {active && <div className="font-mono" style={{ fontSize: 10, color: INK, fontWeight: 700 }}>Q2 accrual · ready</div>}
+                    {active && !isMobile && <div className="font-mono" style={{ fontSize: 10, color: INK, fontWeight: 700 }}>Q2 accrual · ready</div>}
                   </div>
                 </div>
               ))}
@@ -427,7 +433,7 @@ function DealSpinePreview() {
             <div className="font-mono" style={{ fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: MINT, fontWeight: 700 }}>You are here · Interest</div>
             <div style={{ fontWeight: 700, fontSize: 28, letterSpacing: "-.035em", marginTop: 4, marginBottom: 18 }}>Distribute Q2 interest.</div>
             <div style={{ border: `2px solid ${INK}`, background: INK, color: PAPER, padding: 20 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <div className="font-mono" style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "#9a9a96" }}>Atomic · 2 legs</div>
                 <div className="font-mono" style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: MINT, fontWeight: 700 }}>Both or neither</div>
               </div>
@@ -449,7 +455,7 @@ function DealSpinePreview() {
               <div className="font-mono" style={{ marginTop: 16, background: MINT, color: INK, textAlign: "center", padding: 12, fontWeight: 700, fontSize: 12, letterSpacing: ".06em", textTransform: "uppercase" }}>Settle atomically →</div>
             </div>
           </div>
-          <div style={{ borderLeft: `2px solid ${INK}`, background: "#fafaf8", padding: "22px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ borderLeft: isMobile ? undefined : `2px solid ${INK}`, borderTop: isMobile ? `2px solid ${INK}` : undefined, background: "#fafaf8", padding: "22px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
               <div style={{ width: 10, height: 10, background: MINT }} />
               <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: "-.01em" }}>Agent co-pilot</span>
@@ -469,19 +475,19 @@ function DealSpinePreview() {
   );
 }
 
-function AgentCopilot() {
+function AgentCopilot({ isMobile }: { isMobile: boolean }) {
   return (
-    <section style={{ display: "grid", gridTemplateColumns: "1.05fr .95fr", borderBottom: `2px solid ${INK}` }}>
-      <div style={{ padding: "54px 40px", borderRight: `2px solid ${INK}` }}>
+    <section style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.05fr .95fr", borderBottom: `2px solid ${INK}` }}>
+      <div style={{ padding: isMobile ? "40px 20px" : "54px 40px", borderRight: isMobile ? undefined : `2px solid ${INK}`, borderBottom: isMobile ? `2px solid ${INK}` : undefined }}>
         <div className="font-mono" style={{ fontSize: 12, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#666" }}>03 / Intelligence</div>
-        <h2 style={{ margin: "18px 0 0", fontWeight: 700, fontSize: 54, lineHeight: 0.92, letterSpacing: "-.035em", textTransform: "uppercase" }}>
+        <h2 style={{ margin: "18px 0 0", fontWeight: 700, fontSize: "clamp(38px, 9vw, 54px)", lineHeight: 0.92, letterSpacing: "-.035em", textTransform: "uppercase" }}>
           Agent-bank<br />co-pilot.
         </h2>
         <p style={{ margin: "26px 0 0", maxWidth: 400, fontSize: 16, lineHeight: 1.55, color: "#333" }}>
           An LLM monitors covenants against private borrower data and sequences settlement — constrained at all times by
           on-ledger Daml authorization. It can propose. The ledger decides what it&apos;s allowed to do.
         </p>
-        <div style={{ marginTop: 30, display: "inline-flex", border: `2px solid ${INK}` }}>
+        <div style={{ marginTop: 30, display: "inline-flex", border: `2px solid ${INK}`, flexWrap: "wrap", maxWidth: "100%" }}>
           {[
             ["Proposes", INK, "#fff"],
             ["Daml authorizes", "#fff", INK],
@@ -493,7 +499,7 @@ function AgentCopilot() {
           ))}
         </div>
       </div>
-      <div style={{ background: PAPER, padding: "30px 34px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 12 }}>
+      <div style={{ background: PAPER, padding: isMobile ? "28px 20px" : "30px 34px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 12 }}>
         <div className="font-mono" style={{ fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "#666", marginBottom: 4 }}>Co-pilot log · facility #MER-2031</div>
         <div style={{ background: "#fff", border: `2px solid ${INK}`, padding: "14px 16px" }}>
           <div className="font-mono" style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: MINT, fontWeight: 700 }}>⚠ Covenant watch</div>
@@ -503,7 +509,7 @@ function AgentCopilot() {
           <div className="font-mono" style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "#666", fontWeight: 700 }}>↳ Sequence proposed</div>
           <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.45 }}>Interest accrual → pro-rata distribution to 6 holders, single atomic batch.</div>
         </div>
-        <div style={{ background: INK, color: PAPER, border: `2px solid ${INK}`, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ background: INK, color: PAPER, border: `2px solid ${INK}`, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>Authorized on-ledger</div>
           <div className="font-mono" style={{ fontSize: 11, color: MINT, letterSpacing: ".1em" }}>✓ COMMIT</div>
         </div>
@@ -512,13 +518,13 @@ function AgentCopilot() {
   );
 }
 
-function CTA() {
+function CTA({ isMobile }: { isMobile: boolean }) {
   return (
-    <section style={{ background: MINT, borderBottom: `2px solid ${INK}`, padding: "74px 40px", textAlign: "center" }}>
-      <h2 style={{ margin: 0, fontWeight: 700, fontSize: 88, lineHeight: 0.86, letterSpacing: "-.05em", textTransform: "uppercase" }}>
+    <section style={{ background: MINT, borderBottom: `2px solid ${INK}`, padding: isMobile ? "52px 20px" : "74px 40px", textAlign: "center" }}>
+      <h2 style={{ margin: 0, fontWeight: 700, fontSize: "clamp(40px, 11vw, 88px)", lineHeight: 0.86, letterSpacing: "-.05em", textTransform: "uppercase" }}>
         Take private<br />credit on-chain.
       </h2>
-      <div style={{ marginTop: 38, display: "inline-flex", border: `2px solid ${INK}` }}>
+      <div style={{ marginTop: 38, display: "inline-flex", border: `2px solid ${INK}`, flexWrap: "wrap", maxWidth: "100%" }}>
         <Link href="/app" style={{ padding: "18px 32px", background: INK, color: "#fff", fontWeight: 700, fontSize: 14, letterSpacing: ".04em", textTransform: "uppercase" }}>
           Enter the product
         </Link>
