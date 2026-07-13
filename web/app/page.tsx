@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { DevNetBanner } from "@/components/DevNetBanner";
 
 const INK = "#0a0a0a";
 const MINT = "#16d97f";
@@ -97,6 +98,7 @@ export default function Landing() {
 
       {/* MAIN */}
       <div style={{ marginLeft: 58 }}>
+        <DevNetBanner />
         <Hero />
         <Marquee />
         <PrivacySlice />
