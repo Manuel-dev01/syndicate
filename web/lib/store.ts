@@ -1,7 +1,7 @@
-// Server-only seeded "ledger" for the demo. Holds the shared facility, the viewer's own
-// LenderPosition, covenant ratios, settlement history, and the PRIVATE borrower financials.
-// Mutations apply both legs of a settlement together or throw — never a half-state. State is
-// in-memory (ephemeral across Vercel cold starts), which is fine for a live session demo.
+// Server-only seeded "ledger" for the demo. Holds the shared facility, EVERY lender's slice, the
+// covenant ratios, per-lender settlement history, and the PRIVATE borrower financials. Mutations
+// apply both legs of a settlement together or throw — never a half-state. State is in-memory
+// (ephemeral across Vercel cold starts), which is fine for a live session demo.
 // (Imported only by server route handlers — never by client components.)
 import type {
   BorrowerFinancials,
@@ -9,23 +9,65 @@ import type {
   Facility,
   LenderPosition,
   LifecycleStage,
+  Role,
   SettlementKind,
   SettlementRecord,
 } from "./ledger-model";
+import { LEVERAGE_CAP, projectedLeverage } from "./guardrails";
 
 const M = 1_000_000;
 
+// Proposed facility-draw sizes the drawdown stage offers. The stress draw sits INSIDE undrawn
+// capacity ($168M) yet pushes projected leverage above the 5.0× cap — the covenant, not capacity,
+// is what must stop it.
+export const NORMAL_DRAW = 4 * M;
+export const STRESS_DRAW = 150 * M;
+export const FACILITY_AMORT = 12 * M;
+
+// One lender's slot. `role` is set for the three lenders the demo lets you view as (A/B/C); the
+// remaining members stay sealed to everyone but themselves and the agent bank.
+export interface LenderSlot {
+  role?: Role;
+  position: LenderPosition;
+  history: SettlementRecord[];
+}
+
 export interface LedgerStore {
   facility: Facility;
-  position: LenderPosition; // the viewer's slice (Meridian Capital)
+  lenders: LenderSlot[]; // 6 slots, summing to the facility commitment
   covenants: Covenant[];
   lifecycle: LifecycleStage[];
-  history: SettlementRecord[];
-  financials: BorrowerFinancials; // PRIVATE — agent-only
+  financials: BorrowerFinancials; // PRIVATE — agent bank / borrower only
+  facilityLog: SettlementRecord[]; // facility-level cash the borrower is party to
   seq: number;
 }
 
+// hold% of each syndicate member; the three with a role are the viewable lenders A/B/C.
+const CAP_TABLE: { role?: Role; lender: string; holdPct: number }[] = [
+  { role: "lenderA", lender: "Meridian Capital", holdPct: 40 },
+  { role: "lenderB", lender: "Brightwater Credit", holdPct: 25 },
+  { role: "lenderC", lender: "Halton Park Capital", holdPct: 15 },
+  { lender: "Grendel Structured Credit", holdPct: 10 },
+  { lender: "Ridgeline Partners", holdPct: 6 },
+  { lender: "Cormorant Asset Mgmt", holdPct: 4 },
+];
+
+const TOTAL = 480 * M;
+const UTIL = 0.65; // 65% drawn across the facility
+const ACCRUED_FACILITY = 4.02 * M;
+
 function seed(): LedgerStore {
+  const lenders: LenderSlot[] = CAP_TABLE.map((c, i) => {
+    const commitment = round((c.holdPct / 100) * TOTAL);
+    const drawn = round(commitment * UTIL);
+    const accruedInterest = round((c.holdPct / 100) * ACCRUED_FACILITY);
+    return {
+      role: c.role,
+      position: { lender: c.lender, holdPct: c.holdPct, commitment, drawn, accruedInterest },
+      history: seedHistory(i, c.holdPct, c.lender),
+    };
+  });
+
   return {
     facility: {
       facilityId: "MER-2031-B",
@@ -34,23 +76,17 @@ function seed(): LedgerStore {
       name: "Meridian Logistics",
       tranche: "Tranche B",
       currency: "USD",
-      totalCommitment: 480 * M,
-      lenderCount: 6,
+      totalCommitment: TOTAL,
+      lenderCount: CAP_TABLE.length,
       couponLabel: "SOFR + 575bps",
       seniority: "Senior secured",
       maturityDate: "2031-06-30",
       nextInterestDate: "2026-07-15",
     },
-    position: {
-      lender: "Meridian Capital",
-      holdPct: 10.0,
-      commitment: 48 * M,
-      drawn: 31.2 * M,
-      accruedInterest: 0.402 * M,
-    },
+    lenders,
     covenants: [
       { key: "dscr", label: "DSCR", value: 1.38, threshold: 1.15, kind: "floor", ok: true },
-      { key: "leverage", label: "Net leverage", value: 4.1, threshold: 5.0, kind: "cap", ok: true },
+      { key: "leverage", label: "Net leverage", value: 4.1, threshold: LEVERAGE_CAP, kind: "cap", ok: true },
       { key: "icr", label: "Interest cover", value: 2.6, threshold: 2.0, kind: "floor", ok: true },
     ],
     lifecycle: [
@@ -61,17 +97,11 @@ function seed(): LedgerStore {
       { key: "repayment", label: "Repayment", sub: "amortizing", done: false },
       { key: "maturity", label: "Maturity", sub: "2031-06-30", done: false },
     ],
-    history: [
-      mkRecord(0, "interest", "Q1 accrual distribution", 0.39 * M, -0.39 * M, "settled", "2026-04-15"),
-      mkRecord(1, "interest", "Q4 accrual distribution", 0.37 * M, -0.37 * M, "settled", "2026-01-15"),
-      mkRecord(2, "drawdown", "Capex tranche draw", -1.85 * M, 1.85 * M, "settled", "2026-02-08"),
-      mkRecord(3, "drawdown", "Initial funding", -28.95 * M, 28.95 * M, "settled", "2024-03-20"),
-    ],
     financials: {
       sector: "Freight & logistics",
       revenue: 612 * M,
       ebitda: 138 * M,
-      totalDebt: 566 * M,
+      totalDebt: 566 * M, // net leverage 566 / 138 = 4.10×
       dscr: 1.38,
       netLeverage: 4.1,
       interestCover: 2.6,
@@ -79,8 +109,22 @@ function seed(): LedgerStore {
       notes:
         "Diversified freight operator. Q2 freight volumes softening ~4% QoQ on weaker spot rates; management guides to stabilization in H2. Amortization pre-funded.",
     },
+    facilityLog: [
+      mkRecord(90, "drawdown", "Capex tranche draw · facility", -18.5 * M, 18.5 * M, "settled", "2026-02-08"),
+      mkRecord(91, "drawdown", "Initial funding · facility", -289.5 * M, 289.5 * M, "settled", "2024-03-20"),
+    ],
     seq: 100,
   };
+}
+
+// A couple of prior settlements per lender, scaled to hold size, so each role's history looks real.
+function seedHistory(i: number, holdPct: number, _lender: string): SettlementRecord[] {
+  const f = holdPct / 100;
+  return [
+    mkRecord(80 + i, "interest", "Q1 accrual distribution", round(3.9 * M * f), 0, "settled", "2026-04-15"),
+    mkRecord(70 + i, "drawdown", "Capex tranche draw", round(-18.5 * M * f), round(18.5 * M * f), "settled", "2026-02-08"),
+    mkRecord(60 + i, "drawdown", "Initial funding", round(-289.5 * M * f), round(289.5 * M * f), "settled", "2024-03-20"),
+  ];
 }
 
 const TX = ["A1F", "3C0", "9E1", "7B2", "5A9", "C4D", "0xE", "2Bd", "F08", "61C"];
@@ -116,72 +160,154 @@ export function resetStore(): void {
   g.__syndicateStore = seed();
 }
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
+export function slotForRole(s: LedgerStore, role: Role): LenderSlot | null {
+  return s.lenders.find((l) => l.role === role) ?? null;
 }
 
-function append(
-  s: LedgerStore,
-  kind: SettlementKind,
-  label: string,
-  cashLeg: number,
-  positionLeg: number,
-  status: SettlementRecord["status"] = "settled",
-): SettlementRecord {
-  const rec = mkRecord(s.seq++, kind, label, cashLeg, positionLeg, status, today());
-  s.history = [rec, ...s.history];
-  return rec;
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 // ---- Atomic settlement mutations (both legs together, or throw) ----
 
 export class SettlementError extends Error {}
 
-/** Drawdown: a facility-level draw funds the viewer pro-rata. Cash − and drawn + together. */
-export function applyDrawdown(s: LedgerStore, facilityAmount: number): SettlementRecord {
-  if (!(facilityAmount > 0)) throw new SettlementError("Draw amount must be positive.");
-  const share = round(facilityAmount * (s.position.holdPct / 100));
-  if (s.position.drawn + share > s.position.commitment + 1)
-    throw new SettlementError("Funding would exceed your committed amount — rejected, no legs moved.");
-  // both legs in one step
-  s.position.drawn = round(s.position.drawn + share);
-  return append(s, "drawdown", `Drawdown · $${fmtM(facilityAmount)} facility`, -share, share);
+// The leverage covenant is a facility/borrower property: the projected ratio of a PROPOSED facility
+// draw, evaluated the same way no matter who authorizes it. The ledger enforces it before any leg
+// moves — this is the guardrail the LLM cannot talk its way past.
+function guardLeverage(s: LedgerStore, facilityAmount: number): void {
+  const projected = projectedLeverage(s.financials.totalDebt, s.financials.ebitda, facilityAmount);
+  if (projected > LEVERAGE_CAP + 1e-9) {
+    throw new SettlementError(
+      `would breach net-leverage covenant ${LEVERAGE_CAP.toFixed(1)}× (projected ${projected.toFixed(2)}×) — rejected, no legs moved`,
+    );
+  }
 }
 
-/** Interest: distribute the accrued receivable. Cash + and accrual retired to 0 together. */
-export function applyInterest(s: LedgerStore): SettlementRecord {
-  const amt = s.position.accruedInterest;
-  if (!(amt > 0)) throw new SettlementError("No accrued interest to distribute.");
-  s.position.accruedInterest = 0;
-  const rec = append(s, "interest", "Q2 accrual distribution", amt, 0);
-  // mark the interest lifecycle node done
+function appendSlot(
+  s: LedgerStore,
+  slot: LenderSlot,
+  kind: SettlementKind,
+  label: string,
+  cashLeg: number,
+  positionLeg: number,
+): SettlementRecord {
+  const rec = mkRecord(s.seq++, kind, label, cashLeg, positionLeg, "settled", today());
+  slot.history = [rec, ...slot.history];
+  return rec;
+}
+
+function markInterestDone(s: LedgerStore): void {
   const node = s.lifecycle.find((n) => n.key === "interest");
   if (node) {
     node.done = true;
     node.sub = "Q2 distributed";
   }
+}
+
+/** Drawdown funding one lender's slice pro-rata. Cash − and drawn + together, gated by leverage. */
+export function applyDrawdown(s: LedgerStore, slot: LenderSlot, facilityAmount: number): SettlementRecord {
+  if (!(facilityAmount > 0)) throw new SettlementError("Draw amount must be positive.");
+  guardLeverage(s, facilityAmount);
+  const share = round(facilityAmount * (slot.position.holdPct / 100));
+  if (slot.position.drawn + share > slot.position.commitment + 1)
+    throw new SettlementError("Funding would exceed your committed amount — rejected, no legs moved.");
+  slot.position.drawn = round(slot.position.drawn + share);
+  return appendSlot(s, slot, "drawdown", `Drawdown · $${fmtM(facilityAmount)} facility`, -share, share);
+}
+
+/** Agent-bank authorizes a facility draw: every lender funds pro-rata in one indivisible commit. */
+export function applyFacilityDrawdown(s: LedgerStore, facilityAmount: number): SettlementRecord {
+  if (!(facilityAmount > 0)) throw new SettlementError("Draw amount must be positive.");
+  guardLeverage(s, facilityAmount);
+  const plans = s.lenders.map((l) => ({ l, share: round(facilityAmount * (l.position.holdPct / 100)) }));
+  for (const p of plans)
+    if (p.l.position.drawn + p.share > p.l.position.commitment + 1)
+      throw new SettlementError("A lender lacks committed capacity — rejected, no legs moved.");
+  for (const p of plans) {
+    p.l.position.drawn = round(p.l.position.drawn + p.share);
+    appendSlot(s, p.l, "drawdown", `Drawdown · $${fmtM(facilityAmount)} facility`, -p.share, p.share);
+  }
+  s.facilityLog = [
+    mkRecord(s.seq++, "drawdown", `Facility drawdown · $${fmtM(facilityAmount)}`, -facilityAmount, facilityAmount, "settled", today()),
+    ...s.facilityLog,
+  ];
+  return mkRecord(s.seq++, "drawdown", `Facility drawdown · $${fmtM(facilityAmount)}`, -facilityAmount, facilityAmount, "settled", today());
+}
+
+/** Interest: distribute one lender's accrued receivable. Cash + and accrual retired to 0 together. */
+export function applyInterest(s: LedgerStore, slot: LenderSlot): SettlementRecord {
+  const amt = slot.position.accruedInterest;
+  if (!(amt > 0)) throw new SettlementError("No accrued interest to distribute.");
+  slot.position.accruedInterest = 0;
+  const rec = appendSlot(s, slot, "interest", "Q2 accrual distribution", amt, 0);
+  markInterestDone(s);
   return rec;
 }
 
-/** Repayment: principal returns to the viewer. Cash + and drawn − together. */
-export function applyRepayment(s: LedgerStore, amount: number): SettlementRecord {
-  if (!(amount > 0)) throw new SettlementError("Repayment must be positive.");
-  if (amount > s.position.drawn + 1)
-    throw new SettlementError("Repayment exceeds your drawn balance — rejected, no legs moved.");
-  s.position.drawn = round(s.position.drawn - amount);
-  return append(s, "repayment", "Scheduled amortization", amount, -amount);
+/** Agent-bank distributes Q2 interest to every holder pro-rata in one atomic batch. */
+export function applyFacilityInterest(s: LedgerStore): SettlementRecord {
+  let total = 0;
+  for (const l of s.lenders) {
+    const a = l.position.accruedInterest;
+    if (a > 0) {
+      total += a;
+      l.position.accruedInterest = 0;
+      appendSlot(s, l, "interest", "Q2 accrual distribution", a, 0);
+    }
+  }
+  if (!(total > 0)) throw new SettlementError("No accrued interest to distribute.");
+  markInterestDone(s);
+  return mkRecord(s.seq++, "interest", "Facility interest · Q2 pro-rata", round(total), 0, "settled", today());
 }
 
-/** Secondary DvP: sell a slice. Slice leaves (drawn −) and cash arrives (+ proceeds) together. */
-export function applySecondary(s: LedgerStore, notional: number, price: number): SettlementRecord {
+/** Repayment: principal returns to one lender pro-rata. Cash + and drawn − together. */
+export function applyRepayment(s: LedgerStore, slot: LenderSlot, facilityAmount: number): SettlementRecord {
+  if (!(facilityAmount > 0)) throw new SettlementError("Repayment must be positive.");
+  const share = round(facilityAmount * (slot.position.holdPct / 100));
+  if (share > slot.position.drawn + 1)
+    throw new SettlementError("Repayment exceeds your drawn balance — rejected, no legs moved.");
+  slot.position.drawn = round(slot.position.drawn - share);
+  return appendSlot(s, slot, "repayment", "Scheduled amortization", share, -share);
+}
+
+/** Agent-bank returns a facility amortization to every holder pro-rata in one commit. */
+export function applyFacilityRepayment(s: LedgerStore, facilityAmount: number): SettlementRecord {
+  if (!(facilityAmount > 0)) throw new SettlementError("Repayment must be positive.");
+  const plans = s.lenders.map((l) => ({ l, share: round(facilityAmount * (l.position.holdPct / 100)) }));
+  for (const p of plans)
+    if (p.share > p.l.position.drawn + 1)
+      throw new SettlementError("A lender lacks drawn balance — rejected, no legs moved.");
+  for (const p of plans) {
+    p.l.position.drawn = round(p.l.position.drawn - p.share);
+    appendSlot(s, p.l, "repayment", "Scheduled amortization", p.share, -p.share);
+  }
+  s.facilityLog = [
+    mkRecord(s.seq++, "repayment", `Facility amortization · $${fmtM(facilityAmount)}`, facilityAmount, -facilityAmount, "settled", today()),
+    ...s.facilityLog,
+  ];
+  return mkRecord(s.seq++, "repayment", `Facility amortization · $${fmtM(facilityAmount)}`, facilityAmount, -facilityAmount, "settled", today());
+}
+
+/** Secondary DvP: a lender sells a slice. Slice leaves the seller and cash arrives together; the
+ * slice moves to a sealed counterparty so the loan tape stays consistent, but the seller's view
+ * never reveals the buyer. */
+export function applySecondary(s: LedgerStore, slot: LenderSlot, notional: number, price: number): SettlementRecord {
   if (!(notional > 0)) throw new SettlementError("Notional must be positive.");
-  if (notional > s.position.drawn + 1)
+  if (notional > slot.position.drawn + 1)
     throw new SettlementError("Cannot sell more than your drawn slice — rejected, no legs moved.");
   if (!(price > 0 && price <= 105)) throw new SettlementError("Price out of range.");
   const proceeds = round(notional * (price / 100));
-  s.position.drawn = round(s.position.drawn - notional);
-  return append(
+  const buyer = s.lenders.find((l) => l !== slot && !l.role) ?? s.lenders.find((l) => l !== slot);
+  slot.position.drawn = round(slot.position.drawn - notional);
+  slot.position.commitment = round(slot.position.commitment - notional);
+  if (buyer) {
+    buyer.position.drawn = round(buyer.position.drawn + notional);
+    buyer.position.commitment = round(buyer.position.commitment + notional);
+  }
+  return appendSlot(
     s,
+    slot,
     "secondary",
     `Secondary sell · $${fmtM(notional)} @ ${price.toFixed(2)} · counterparty sealed`,
     proceeds,

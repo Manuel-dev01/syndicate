@@ -53,7 +53,7 @@ private borrower data — and can execute only what its Daml party is authorized
 | Ledger | Canton — **DevNet** for the live deployment |
 | Ledger access | JSON Ledger API (frontend) + gRPC Ledger API v2 |
 | Frontend | Next.js (App Router) + TypeScript + Tailwind |
-| Agent service | Node/TypeScript calling the Anthropic API (separate process, own party) |
+| Agent service | Node/TypeScript calling the DeepSeek API (separate process, own party) |
 
 Repository layout and design rationale: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -88,7 +88,9 @@ configured via environment variables.
 **Live on Canton DevNet.** The Daml model (LF-2, SDK 3.4.11) is uploaded to the hackathon's shared
 Canton DevNet validator and **real contracts are running on-ledger** — created and queried over the
 JSON Ledger API v2 (`https://ledger-api.validator.devnet.sandbox.fivenorth.io/v2/*`, OIDC auth).
-Reproduce with `bash scripts/deploy-shared.sh` (config in `.env`), or verify directly:
+Reproduce on the shared validator with `bash scripts/deploy-shared.sh`, or on a self-hosted
+sponsored node with `bash scripts/deploy-devnet.sh` (both read config from `.env`), or verify
+directly:
 
 ```bash
 # active contracts our agent-bank party is a stakeholder of, on DevNet
@@ -97,9 +99,14 @@ curl $LEDGER_JSON_API_URL/v2/state/active-contracts -H "Authorization: Bearer $T
 ```
 
 **Frontend:** https://syndicate-delta.vercel.app — landing + the **deal-spine product** (`/app`),
-typed to the same Daml model (`Facility` / `LenderPosition` / `Cash` / `Settlement`): per-lender
-privacy, atomic both-legs settlement, and the DeepSeek Agent-Bank Co-Pilot. Its data layer swaps to
-the DevNet JSON Ledger API with no UI change.
+typed to the same Daml model (`Facility` / `LenderPosition` / `Cash` / `Settlement`). It ships the
+**role-switcher** (Agent Bank / Lender A / B / C / Borrower over one facility, each a demonstrably
+different slice), a **"what others can see"** inspector that renders the signatory/observer partition
+as a matrix, atomic both-legs settlement, and the DeepSeek **Agent-Bank Co-Pilot** — which catches a
+leverage-covenant breach on a proposed drawdown and **blocks it** via a typed proposal + guardrail
+(the ledger, not the prompt, is the authority). The partition is enforced server-side: a lender's
+API payload carries no other-lender amounts and no borrower financials. The data layer swaps to the
+DevNet JSON Ledger API with no UI change.
 
 > The full multi-lender lifecycle on DevNet needs a few more `actAs` grants than the shared M2M
 > user currently allows (`TOO_MANY_USER_RIGHTS`); the seed scripts run it end-to-end the moment a

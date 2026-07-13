@@ -36,13 +36,41 @@ root; `daml test` runs every `Script` in the project.
   Daml choice: a settlement either moves both or neither. A choice carries the authority of its
   contract's signatories, so the agent bank can settle against a lender's position without the
   lender co-signing each transaction.
-- `// VERIFY:` Daml-LF compatibility for the DAR on Canton 3.x DevNet — confirm against
-  docs.digitalasset.com and docs.global.canton.network.
+- **Daml-LF compatibility (resolved).** A 2.10.4/LF-1.x DAR is **not** accepted by a Canton 3.x
+  participant; the DevNet DAR is built with SDK 3.4.11 → LF 2.x. See "Toolchain & LF version".
+
+## Frontend: role-switcher & the agent guardrail
+
+- **The partition is enforced server-side, not styled client-side.** `web/lib/privacy.ts`
+  `viewAs(store, role)` returns a role-scoped `FacilityView`: a lender gets only its own slice +
+  sealed placeholders (no `loanTape`, no `financials`); the agent bank alone gets the full loan tape
+  + private financials; the borrower gets facility aggregates + its own financials but no per-lender
+  identities. A lender's `/api/facility?role=…` payload therefore contains zero other-lender amounts
+  — the Daml signatory/observer boundary, reproduced in the response shape. The "what others can
+  see" inspector renders this as a visibility matrix.
+- **The co-pilot proposes; the guardrail authorizes.** `web/app/api/copilot/route.ts` (DeepSeek,
+  server-side) reasons over the borrower's private financials need-to-know and emits a TYPED
+  `assessment {decision, choice, args, rationale, covenantImpact}`. `web/lib/guardrails.ts`
+  validates it: malformed → scripted fallback; a choice outside the agent's authorization (mirrors
+  `AgentAuthorization`) → force-blocked; and the leverage impact of a proposed draw is recomputed
+  deterministically — if it breaches the cap the guardrail forces `block` even when the LLM said
+  `allow`. The sim ledger (`web/lib/store.ts`) independently rejects a breaching draw before any leg
+  moves, so the "both legs or neither" invariant holds regardless of the model. This maps 1:1 to the
+  on-ledger Daml choice for the DevNet swap.
 
 ## DevNet deployment runbook
 
 Deploying to **Canton Network DevNet** (the live submission target). Verified against
 docs.digitalasset.com, docs.sync.global, and the cn-quickstart repo (2026-07).
+
+**Status (achieved, partially gated).** The LF-2 DAR is uploaded to the hackathon's shared Seaport
+validator (fivenorth) and **real contracts run on-ledger** (`Facility`, `Cash`, `DrawdownRequest`),
+created + queried over the JSON Ledger API v2 and surfaced live in the deployed product's "Live on
+Canton DevNet" banner (`web/app/api/devnet/route.ts`). The **full 5-party seed** (3 `LenderPosition`
++ per-lender `Cash`) is blocked externally: the shared M2M ledger user is at its per-user rights cap
+(`TOO_MANY_USER_RIGHTS`), so it cannot `actAs` all six demo parties at once. The seed scripts
+(`scripts/deploy-shared.sh`) run to completion the moment a dedicated ledger user / org grant lands;
+nothing in the code is waiting.
 
 ### Two hard prerequisites
 1. **LF-2 DAR.** The model must be built with an **SDK 3.4.x** toolchain (Daml-LF **2.x**); a

@@ -1,5 +1,5 @@
 // Types mirroring the Daml templates (Facility, LenderPosition, Cash, Settlement, Covenant).
-// The sim-ledger API serves these now; in Phase 3 the same shapes come from the JSON Ledger API,
+// The sim-ledger API serves these now; the same shapes come from the JSON Ledger API on DevNet,
 // so the UI never changes. All money is in whole USD; the UI formats to $X.XM.
 
 export interface Facility {
@@ -17,12 +17,12 @@ export interface Facility {
   nextInterestDate: string; // "2026-07-15"
 }
 
-// The viewer's own slice — the one LenderPosition they (and the agent bank) can see.
+// One LenderPosition — a single lender's slice (visible only to that lender + the agent bank).
 export interface LenderPosition {
   lender: string; // "Meridian Capital"
-  holdPct: number; // 10.0
-  commitment: number; // 48_000_000
-  drawn: number; // 31_200_000
+  holdPct: number; // 40.0
+  commitment: number; // 192_000_000
+  drawn: number; // 124_800_000
   accruedInterest: number; // receivable not yet distributed
 }
 
@@ -42,11 +42,7 @@ export interface Covenant {
   ok: boolean;
 }
 
-export type SettlementKind =
-  | "drawdown"
-  | "interest"
-  | "repayment"
-  | "secondary";
+export type SettlementKind = "drawdown" | "interest" | "repayment" | "secondary";
 
 // A settlement always carries BOTH legs — there is no half-state.
 export interface SettlementRecord {
@@ -67,16 +63,6 @@ export interface LifecycleStage {
   done: boolean;
 }
 
-// The privacy-filtered "your slice" view — what the API returns for a lender.
-export interface FacilityView {
-  facility: Facility;
-  position: LenderPosition;
-  covenants: Covenant[];
-  sealedLenders: SealedLender[];
-  lifecycle: LifecycleStage[];
-  history: SettlementRecord[];
-}
-
 // Private borrower data — readable need-to-know by the agent bank / co-pilot only. NEVER returned
 // to a lender view. The co-pilot reasons over this.
 export interface BorrowerFinancials {
@@ -89,4 +75,42 @@ export interface BorrowerFinancials {
   interestCover: number;
   freightVolumeTrendPct: number; // negative = softening
   notes: string;
+}
+
+// ---- Roles: the same facility, seen five different ways (the on-ledger partition) ----
+
+export type Role = "borrower" | "agentBank" | "lenderA" | "lenderB" | "lenderC";
+
+export const ROLES: { key: Role; label: string; kind: "agent" | "lender" | "borrower" }[] = [
+  { key: "agentBank", label: "Agent Bank", kind: "agent" },
+  { key: "lenderA", label: "Lender A", kind: "lender" },
+  { key: "lenderB", label: "Lender B", kind: "lender" },
+  { key: "lenderC", label: "Lender C", kind: "lender" },
+  { key: "borrower", label: "Borrower", kind: "borrower" },
+];
+
+const ROLE_KEYS: Role[] = ["borrower", "agentBank", "lenderA", "lenderB", "lenderC"];
+
+export function parseRole(v: string | null | undefined): Role {
+  return v && (ROLE_KEYS as string[]).includes(v) ? (v as Role) : "lenderA";
+}
+
+// The privacy-filtered view the API returns for a role. What a role may see is encoded here:
+//   - `loanTape`   — every lender's slice. ONLY the agent bank gets this.
+//   - `financials` — the borrower's private numbers. ONLY the agent bank and the borrower get this.
+//   - `position`   — a lender's own slice; for agent bank/borrower it is a facility aggregate.
+//   - `sealedLenders` — opaque placeholders for members the viewer cannot see.
+// A lender-role payload therefore carries NO other-lender amounts and NO borrower financials.
+export interface FacilityView {
+  role: Role;
+  viewerLabel: string;
+  canSettle: boolean; // lenders + agent bank authorize; the borrower only requests
+  facility: Facility;
+  position: LenderPosition;
+  covenants: Covenant[];
+  sealedLenders: SealedLender[];
+  lifecycle: LifecycleStage[];
+  history: SettlementRecord[];
+  loanTape?: LenderPosition[]; // agent bank only
+  financials?: BorrowerFinancials; // agent bank + borrower only
 }
