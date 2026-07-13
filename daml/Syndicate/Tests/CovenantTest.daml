@@ -1,0 +1,49 @@
+-- | CovenantTest — the covenant guardrail is an on-ledger property, not just a UI check.
+--
+-- Proves: (1) a compliant draw returns a projected leverage within the cap; (2) a draw that would
+-- breach the leverage covenant makes the assessment ABORT on-ledger — the agent party cannot obtain
+-- an authorized pass for it; (3) only the authorized agent party may run the assessment — a lender
+-- can neither see nor exercise it. This mirrors web/lib/guardrails.ts on the ledger.
+module Syndicate.Tests.CovenantTest where
+
+import Daml.Script
+
+import Syndicate.Covenant
+
+-- Standard borrower snapshot from the demo: net leverage 566/138 = 4.10x, cap 5.0x.
+setupMonitor : Script (Party, Party, Party, ContractId CovenantMonitor)
+setupMonitor = do
+  agentBank <- allocateParty "AgentBank"
+  agent     <- allocateParty "AgentCoPilot"
+  outsider  <- allocateParty "LenderA"
+  cid <- submit agentBank $ createCmd CovenantMonitor with
+    facilityId = "FAC-2026-001"
+    agentBank
+    agent
+    ebitda = 138000000.0
+    totalDebt = 566000000.0
+    leverageCap = 5.0
+    scope = "read covenant + borrower financials; assess drawdown"
+  pure (agentBank, agent, outsider, cid)
+
+-- (1) A $4M draw keeps projected leverage (570/138 = 4.13x) inside the 5.0x cap — assessment passes.
+testCovenantWithinCap : Script ()
+testCovenantWithinCap = do
+  (_, agent, _, cid) <- setupMonitor
+  projected <- submit agent $ exerciseCmd cid AssessDrawdown with proposedDraw = 4000000.0
+  assertMsg "projected leverage must be within the cap" (projected <= 5.0)
+  assertMsg "projected leverage computed (~4.13x)" (projected > 4.10 && projected < 4.15)
+
+-- (2) A $150M draw (716/138 = 5.19x) breaches the 5.0x cap — the ledger REFUSES the assessment.
+-- Capacity may exist, but the covenant does not: the guardrail is on-ledger.
+testCovenantBreachBlockedOnLedger : Script ()
+testCovenantBreachBlockedOnLedger = do
+  (_, agent, _, cid) <- setupMonitor
+  submitMustFail agent $ exerciseCmd cid AssessDrawdown with proposedDraw = 150000000.0
+
+-- (3) Only the authorized agent party controls the assessment; a lender is neither observer nor
+-- controller, so it cannot exercise it.
+testOnlyAgentControls : Script ()
+testOnlyAgentControls = do
+  (_, _, outsider, cid) <- setupMonitor
+  submitMustFail outsider $ exerciseCmd cid AssessDrawdown with proposedDraw = 4000000.0

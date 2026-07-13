@@ -13,9 +13,12 @@ times by on-ledger Daml authorization.
 
 ## Why this can only be built well on Canton
 
-Private credit is a multi-trillion-dollar market still run on spreadsheets, email, and manual
-agent banks. The hard constraints are *privacy* and *atomicity*, and they pull against each other
-on every other infrastructure:
+Private credit reached **~$2.1 trillion** globally in 2023 and is still run on spreadsheets, email,
+and manual agent banks (IMF, *Global Financial Stability Report*, Apr 2024; projected to ~$2.8T by
+2028 per Morgan Stanley). A secondary syndicated-loan trade settles on a **T+7 (par) to T+20
+(distressed)** business-day standard — versus **T+2** for bonds — and in practice frequently runs
+longer, with manual reconciliation the whole way (LSTA / LMA). The two hard constraints are
+*privacy* and *atomicity*, and they pull against each other on every other infrastructure:
 
 - **Sub-transaction privacy.** Competing lenders co-invest in one facility yet must never see
   each other's positions. Canton enforces this at the ledger level through Daml

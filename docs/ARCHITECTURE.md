@@ -55,8 +55,15 @@ root; `daml test` runs every `Script` in the project.
   `AgentAuthorization`) → force-blocked; and the leverage impact of a proposed draw is recomputed
   deterministically — if it breaches the cap the guardrail forces `block` even when the LLM said
   `allow`. The sim ledger (`web/lib/store.ts`) independently rejects a breaching draw before any leg
-  moves, so the "both legs or neither" invariant holds regardless of the model. This maps 1:1 to the
-  on-ledger Daml choice for the DevNet swap.
+  moves, so the "both legs or neither" invariant holds regardless of the model.
+- **The guardrail exists on-ledger too.** `daml/Syndicate/Covenant.daml` `CovenantMonitor` (signatory
+  agentBank, observer the co-pilot's `agent` party) carries the borrower financial snapshot + the
+  leverage cap and exposes a `nonconsuming AssessDrawdown` choice controlled by the agent: a
+  compliant draw returns the projected leverage, a breaching draw **aborts the transaction**. Only
+  the authorized agent party can exercise it. This is the Daml analogue of `web/lib/guardrails.ts`
+  (`projectedLeverage` / `LEVERAGE_CAP`) — proved by `daml/Syndicate/Tests/CovenantTest.daml`
+  (within-cap passes, breach aborts on-ledger, only-agent controls) — so "the ledger, not the prompt,
+  authorizes" is literally true, and the frontend swaps onto it on DevNet with the same semantics.
 
 ## DevNet deployment runbook
 

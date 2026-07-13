@@ -1,10 +1,71 @@
 -- | Covenant.daml — covenant definitions + the monitoring contract the Co-Pilot reads.
 --
--- Empty-but-valid stub for now.
---
--- Design intent: a `CovenantMonitor` contract readable need-to-know by the
--- agent bank / co-pilot party. The borrower's underlying financials are disclosed to the
--- agent bank and co-pilot only — never wholesale to lenders. The co-pilot reasons over this
--- private data and proposes a typed Daml choice; it can execute only what its party is
--- authorized to (see Syndicate.Roles.AgentAuthorization).
+-- Design intent (now implemented): a `CovenantMonitor` contract carrying the facility's covenant
+-- thresholds and a need-to-know snapshot of the borrower's financials. The agent bank creates it;
+-- the Co-Pilot's own Daml party (distinct from the agent bank — see `Syndicate.Roles.AgentParty`
+-- and `AgentAuthorization`) can read it and ASK it to assess a proposed drawdown. The ledger — not
+-- a prompt — is the guardrail: a draw that would breach the leverage covenant makes the assessment
+-- choice ABORT, so the agent party cannot obtain an authorized pass for it. This is the on-ledger
+-- analogue of the frontend guardrail in `web/lib/guardrails.ts` (`projectedLeverage` / `LEVERAGE_CAP`).
 module Syndicate.Covenant where
+
+import Syndicate.Roles
+
+-- | CovenantMonitor — the Co-Pilot's need-to-know window onto covenant + borrower data.
+--
+-- SIGNATORY: agentBank
+--   The agent bank owns the borrower relationship and the private financials; it is the sole
+--   signatory, so only it can create or update the monitor. Nothing the Co-Pilot does can
+--   manufacture this data or authority for itself.
+-- OBSERVER: agent (the Co-Pilot's own party)
+--   The Co-Pilot can read the monitor (covenant thresholds + financial snapshot) and exercise the
+--   assessment choice, but cannot alter the contract — it is not a signatory.
+-- VISIBILITY CHECK: No lender is a stakeholder, and no per-lender data is carried here, so the
+--   monitor leaks nothing about any lender's position. The borrower's financials are visible ONLY
+--   to the agent bank and the Co-Pilot it authorizes — never to lenders wholesale.
+template CovenantMonitor
+  with
+    facilityId : Text
+    agentBank : AgentBank
+    agent : AgentParty
+    -- Need-to-know borrower financials snapshot (attested by the agent bank):
+    ebitda : Decimal
+    totalDebt : Decimal
+    -- Net-leverage covenant cap (net debt / EBITDA). Mirrors LEVERAGE_CAP in web/lib/guardrails.ts.
+    leverageCap : Decimal
+    -- | Human-readable scope of what the Co-Pilot may do — documents the AgentAuthorization intent.
+    scope : Text
+  where
+    signatory agentBank
+    observer agent
+
+    ensure ebitda > 0.0
+        && totalDebt >= 0.0
+        && leverageCap > 0.0
+        && scope /= ""
+
+    -- | AssessDrawdown — the Co-Pilot asks the ledger whether a proposed facility draw is within the
+    -- leverage covenant. Returns the projected net leverage if compliant; ABORTS (rolls back) if it
+    -- would breach the cap. Because only the `agent` party controls this choice and a breach aborts,
+    -- the Co-Pilot can never obtain an on-ledger authorization for a covenant-breaching draw — the
+    -- guardrail is the ledger, not the model. Non-consuming: assessment never mutates state.
+    nonconsuming choice AssessDrawdown : Decimal
+      with
+        proposedDraw : Decimal
+      controller agent
+      do
+        assertMsg "proposedDraw must be >= 0" (proposedDraw >= 0.0)
+        let projected = (totalDebt + proposedDraw) / ebitda
+        assertMsg
+          ("Proposed draw breaches the net-leverage covenant (" <> show leverageCap <> "x)")
+          (projected <= leverageCap)
+        pure projected
+
+    -- | The agent bank can revise the financial snapshot as the borrower reports new figures.
+    choice UpdateFinancials : ContractId CovenantMonitor
+      with
+        newEbitda : Decimal
+        newTotalDebt : Decimal
+      controller agentBank
+      do
+        create this with ebitda = newEbitda, totalDebt = newTotalDebt
