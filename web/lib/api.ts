@@ -47,7 +47,7 @@ export interface CopilotProposal {
   body: string;
   proposal?: string;
   assessment?: ValidatedDecision;
-  source: "deepseek" | "scripted";
+  source: "deepseek" | "scripted" | "on-ledger";
 }
 
 export async function fetchCopilot(stage: string, role: Role, amount?: number): Promise<CopilotProposal> {

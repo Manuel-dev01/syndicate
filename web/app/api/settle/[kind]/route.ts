@@ -15,6 +15,10 @@ import {
 } from "@/lib/store";
 import { viewAs } from "@/lib/privacy";
 import { parseRole } from "@/lib/ledger-model";
+import { isRealLedger } from "@/lib/ledgerMode";
+import { devnetView } from "@/lib/devnetView";
+import { settleDrawdown } from "@/lib/ledgerSettle";
+import { LedgerError } from "@/lib/ledgerClient";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +47,34 @@ export async function POST(req: Request, { params }: { params: { kind: string } 
   const slot = slotForRole(s, role);
   if (!isAgent && !slot) {
     return NextResponse.json({ error: "No position for this role." }, { status: 400 });
+  }
+
+  // Real-ledger mode: a drawdown is EXERCISED ON CANTON — the covenant gate
+  // (CovenantMonitor.AssessDrawdown) aborts a breach on-ledger, else DrawdownRequest + SettleDrawdown
+  // fund every lender pro-rata in one commit. A ledger rejection → 400 (nothing moved). Other kinds
+  // fall through to the sim. Any non-covenant ledger failure also falls back to the sim (never break).
+  if (isRealLedger() && params.kind === "drawdown") {
+    const amount = body.amount ?? NORMAL_DRAW;
+    try {
+      const { updateId } = await settleDrawdown(amount);
+      const view = await devnetView(role).catch(() => viewAs(s, role));
+      return NextResponse.json({
+        view,
+        record: {
+          id: `dl-${Date.now()}`,
+          kind: "drawdown" as const,
+          label: "Facility drawdown · on-ledger",
+          cashLeg: -amount,
+          positionLeg: amount,
+          date: new Date().toISOString().slice(0, 10),
+          txRef: `ledger:${updateId ?? "committed"}`,
+          status: "settled" as const,
+        },
+      });
+    } catch (e) {
+      if (e instanceof LedgerError) return NextResponse.json({ error: e.message }, { status: 400 });
+      // non-covenant failure (e.g. unreachable) → fall through to the sim below
+    }
   }
 
   try {

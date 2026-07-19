@@ -9,6 +9,37 @@ import {
   type ValidatedDecision,
 } from "@/lib/guardrails";
 import type { LedgerStore } from "@/lib/store";
+import { isRealLedger } from "@/lib/ledgerMode";
+import { assessDrawdown } from "@/lib/ledgerSettle";
+
+// Real-ledger covenant verdict: exercise CovenantMonitor.AssessDrawdown on Canton. A breach ABORTS
+// on-ledger, so the co-pilot's block is the ledger's, not the prompt's. Returns null if unreachable
+// (caller falls back to the deterministic guardrail / DeepSeek).
+async function onLedgerAssessment(s: LedgerStore, draw: number): Promise<Proposal | null> {
+  try {
+    const r = await assessDrawdown(draw);
+    const projected = Math.round(projectedLeverage(s.financials.totalDebt, s.financials.ebitda, draw) * 100) / 100;
+    const breaches = !r.ok;
+    return {
+      tag: breaches ? "⛔ Rejected on-ledger" : "✓ Cleared on-ledger",
+      tone: breaches ? "block" : "info",
+      body: breaches
+        ? `The Canton ledger REJECTED this draw — CovenantMonitor.AssessDrawdown aborted at ${projected.toFixed(2)}×, through the ${LEVERAGE_CAP.toFixed(1)}× cap. The co-pilot cannot obtain on-ledger authorization for it.`
+        : `The Canton ledger CLEARED this draw — CovenantMonitor.AssessDrawdown returned ${projected.toFixed(2)}×, inside the ${LEVERAGE_CAP.toFixed(1)}× cap.`,
+      assessment: {
+        decision: breaches ? "block" : "allow",
+        choice: "drawdown",
+        args: { amount: draw },
+        rationale: breaches ? "Rejected by CovenantMonitor.AssessDrawdown on Canton." : "Cleared by CovenantMonitor.AssessDrawdown on Canton.",
+        covenantImpact: { key: "leverage", projected, threshold: LEVERAGE_CAP, breaches },
+        overridden: false,
+      },
+      source: "on-ledger",
+    };
+  } catch {
+    return null;
+  }
+}
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +57,7 @@ interface Proposal {
   body: string;
   proposal?: string;
   assessment?: ValidatedDecision;
-  source: "deepseek" | "scripted";
+  source: "deepseek" | "scripted" | "on-ledger";
 }
 
 const M = 1_000_000;
@@ -132,6 +163,12 @@ export async function POST(req: Request) {
   const s = getStore();
   const fin = privateBorrowerData(s);
   const draw = typeof amount === "number" ? amount : key === "drawdown" ? NORMAL_DRAW : undefined;
+
+  // Real-ledger mode: a drawdown's covenant verdict comes from Canton itself (AssessDrawdown).
+  if (isRealLedger() && key === "drawdown" && typeof draw === "number") {
+    const onLedger = await onLedgerAssessment(s, draw);
+    if (onLedger) return NextResponse.json(onLedger);
+  }
 
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return NextResponse.json(scripted(key, s, draw));

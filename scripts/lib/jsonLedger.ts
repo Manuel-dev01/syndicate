@@ -76,14 +76,29 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 // ---- Ledger operations ----
 
-/** Allocate a party; returns the full `hint::fingerprint` id. */
+/** Allocate a party; returns the full `hint::fingerprint` id. Idempotent: if the hint is already
+ * allocated on this node, resolves and returns the existing id instead of failing (safe re-runs). */
 export async function allocateParty(partyIdHint: string): Promise<string> {
-  const out = await api<{ partyDetails: { party: string } }>("/v2/parties", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ partyIdHint, identityProviderId: "" }),
-  });
-  return out.partyDetails.party;
+  try {
+    const out = await api<{ partyDetails: { party: string } }>("/v2/parties", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ partyIdHint, identityProviderId: "" }),
+    });
+    return out.partyDetails.party;
+  } catch (e) {
+    if (e instanceof Error && /already exists|already allocated/i.test(e.message)) {
+      const existing = await findParty(partyIdHint);
+      if (existing) return existing;
+    }
+    throw e;
+  }
+}
+
+/** Find an already-allocated party whose id starts with `hint::`. */
+async function findParty(hint: string): Promise<string | undefined> {
+  const out = await api<{ partyDetails?: { party: string }[] }>("/v2/parties");
+  return (out.partyDetails ?? []).map((d) => d.party).find((p) => p.startsWith(`${hint}::`));
 }
 
 /** Grant the ledger user CanActAs a party, so its token can act/read as that party. */
@@ -91,7 +106,7 @@ export async function grantActAs(userId: string, party: string): Promise<void> {
   await api(`/v2/users/${encodeURIComponent(userId)}/rights`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ userId, rights: [{ kind: { CanActAs: { value: { party } } } }] }),
+    body: JSON.stringify({ userId, identityProviderId: "", rights: [{ kind: { CanActAs: { value: { party } } } }] }),
   });
 }
 
@@ -127,6 +142,36 @@ export async function submitAndWait(
 /** A JSON API v2 CreateCommand. Note: this validator encodes Int and Numeric fields as STRINGS. */
 export function createCommand(templateId: string, payload: Record<string, unknown>): unknown {
   return { CreateCommand: { templateId, createArguments: payload } };
+}
+
+/** A JSON API v2 ExerciseCommand. Decimals/Ints in `choiceArgument` are STRINGS on this validator. */
+export function exerciseCommand(
+  templateId: string,
+  contractId: string,
+  choice: string,
+  choiceArgument: Record<string, unknown>,
+): unknown {
+  return { ExerciseCommand: { templateId, contractId, choice, choiceArgument } };
+}
+
+/** Submit and wait for the transaction TREE — needed to read a choice's return value, and it throws
+ * (via api()) with the Daml error text on a rejection (e.g. a covenant-breach `assertMsg` abort). */
+export async function submitAndWaitForTree(
+  actAs: string[],
+  commands: unknown[],
+  opts: { userId?: string; readAs?: string[] } = {},
+): Promise<Record<string, unknown>> {
+  return api("/v2/commands/submit-and-wait-for-transaction-tree", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      commands,
+      commandId: `syndicate-${Date.now()}`,
+      actAs,
+      readAs: opts.readAs ?? [],
+      userId: opts.userId ?? APP_USER(),
+    }),
+  });
 }
 
 /** Read active contracts a party is a stakeholder of (privacy proof: a lender sees only its own). */

@@ -27,10 +27,17 @@ const dec = (n: number) => n.toFixed(1); // Numeric fields are encoded as string
 interface Parties {
   borrower: string;
   agentBank: string;
+  agent: string; // the Co-Pilot's own party (controller of CovenantMonitor.AssessDrawdown)
   lenderA: string;
   lenderB: string;
   lenderC: string;
 }
+
+// Borrower financial snapshot for the on-ledger covenant guardrail (matches web/lib/store.ts):
+// net leverage = 566 / 138 = 4.10×, cap 5.0×. A $150M draw → 5.19× → AssessDrawdown aborts.
+const EBITDA = 138_000_000;
+const TOTAL_DEBT = 566_000_000;
+const LEVERAGE_CAP = 5.0;
 
 async function main() {
   const p = JSON.parse(await readFile("scripts/.parties.json", "utf8")) as Parties;
@@ -87,8 +94,40 @@ async function main() {
     );
   }
 
+  // AgentAuthorization — the scoped, revocable grant that bounds the Co-Pilot. Signatory agentBank,
+  // observer the agent (co-pilot) party.
+  await submitAndWait(
+    [p.agentBank],
+    [
+      createCommand(tid("Syndicate.Roles:AgentAuthorization"), {
+        agentBank: p.agentBank,
+        agent: p.agent,
+        scope: "read covenant + borrower financials; assess drawdown; sequence settlement",
+      }),
+    ],
+  );
+
+  // CovenantMonitor — the on-ledger covenant guardrail. Signatory agentBank, observer the agent.
+  // AssessDrawdown (controller = agent) returns the projected leverage, or ABORTS on a breach.
+  await submitAndWait(
+    [p.agentBank],
+    [
+      createCommand(tid("Syndicate.Covenant:CovenantMonitor"), {
+        facilityId: FACILITY_ID,
+        agentBank: p.agentBank,
+        agent: p.agent,
+        ebitda: dec(EBITDA),
+        totalDebt: dec(TOTAL_DEBT),
+        leverageCap: dec(LEVERAGE_CAP),
+        scope: "read covenant + borrower financials; assess drawdown",
+      }),
+    ],
+  );
+
   // eslint-disable-next-line no-console
-  console.log(`Seeded facility ${FACILITY_ID}: 1 Facility, 3 LenderPositions, 3 Cash holdings.`);
+  console.log(
+    `Seeded facility ${FACILITY_ID}: 1 Facility, 3 LenderPositions, 3 Cash, 1 AgentAuthorization, 1 CovenantMonitor.`,
+  );
 }
 
 main().catch((e) => {

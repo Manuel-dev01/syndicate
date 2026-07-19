@@ -779,9 +779,10 @@ function SettleBanner({ record, error, pending }: { record: SettlementRecord | n
     );
   }
   if (record) {
+    const onLedger = record.txRef.startsWith("ledger:");
     return (
       <div className="font-mono" style={{ marginBottom: 20, border: `2px solid ${INK}`, background: MINT, color: INK, padding: "12px 16px", fontSize: 12, letterSpacing: ".04em", fontWeight: 700 }}>
-        ✓ Settled atomically · cash {money(record.cashLeg, { sign: true })} · position {money(record.positionLeg, { sign: true })} · {record.txRef}
+        ✓ {onLedger ? "Settled on Canton DevNet" : "Settled atomically"} · cash {money(record.cashLeg, { sign: true })} · position {money(record.positionLeg, { sign: true })} · {onLedger ? record.txRef.replace(/^ledger:/, "tx ") : record.txRef}
       </div>
     );
   }
@@ -813,8 +814,8 @@ function CopilotRail({ copilot, view, onAuthorize, pending, isMobile }: { copilo
           <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-.01em" }}>Agent co-pilot</span>
         </div>
         <span className="font-mono" style={{ fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase", color: "#666", textAlign: "right" }}>
-          {copilot?.source === "deepseek" ? "live · deepseek" : "constrained"}
-          <br />by Daml
+          {copilot?.source === "on-ledger" ? "verified · on-ledger" : copilot?.source === "deepseek" ? "live · deepseek" : "constrained"}
+          <br />{copilot?.source === "on-ledger" ? "on Canton" : "by Daml"}
         </span>
       </div>
       <div style={{ padding: "20px 22px", overflow: isMobile ? "visible" : "auto", display: "flex", flexDirection: "column", gap: 14, flex: 1 }}>
