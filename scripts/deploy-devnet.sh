@@ -11,7 +11,7 @@
 #   PARTY_HINT            org-func-enumerator, e.g. syndicate-validator-1
 #   LEDGER_JSON_API_URL   the participant's JSON Ledger API v2 base, e.g. http://localhost:7575
 #   LEDGER_JWT_SECRET     shared HS256 secret for dev tokens
-#   DAR_PATH              path to the LF-2 DAR (daml/.daml/dist/syndicate-0.1.0.dar)
+#   DAR_PATH              path to the LF-2 DAR (daml/.daml/dist/syndicate-0.2.0.dar)
 set -euo pipefail
 
 req() { : "${!1:?Missing required env var $1}"; }

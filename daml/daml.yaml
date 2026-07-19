@@ -3,7 +3,7 @@
 # written in the portable subset; the 2.x→3.x delta is a few Daml Script API fixes (see git log).
 sdk-version: 3.4.11
 name: syndicate
-version: 0.1.0
+version: 0.2.0
 source: .
 # Test scripts are co-located under Syndicate/Tests (one source root per project).
 dependencies:

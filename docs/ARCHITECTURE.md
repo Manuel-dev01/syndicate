@@ -247,10 +247,10 @@ The whole seed + verify pipeline is validated against a **real Canton 3.x partic
 ```bash
 source scripts/daml-env.sh
 cd daml && daml build && \
-  daml sandbox --dar .daml/dist/syndicate-0.1.0.dar --json-api-port 7575 &   # JSON API v2, dev auth off
+  daml sandbox --dar .daml/dist/syndicate-0.2.0.dar --json-api-port 7575 &   # JSON API v2, dev auth off
 cd .. && ( cd scripts && npm install )
 export LEDGER_JSON_API_URL=http://127.0.0.1:7575 LEDGER_JWT_SECRET=dev LEDGER_APP_USER=syndicate-app
-export DAML_PACKAGE_ID=$(daml damlc inspect-dar --json daml/.daml/dist/syndicate-0.1.0.dar | jq -r .main_package_id)
+export DAML_PACKAGE_ID=$(daml damlc inspect-dar --json daml/.daml/dist/syndicate-0.2.0.dar | jq -r .main_package_id)
 scripts/node_modules/.bin/tsx scripts/allocate-parties.ts
 scripts/node_modules/.bin/tsx scripts/init-ledger.ts
 scripts/node_modules/.bin/tsx scripts/verify-privacy.ts   # asserts Lender A sees only its own slice
