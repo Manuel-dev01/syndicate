@@ -82,8 +82,8 @@ deliberate privacy decision, documented in a comment block above the template.
 | `Facility` (`Facility.daml`) | borrower, agentBank | — | the shared spine; facility terms, **no per-lender data** |
 | `LenderPosition` (`Lender.daml`) | that lender, agentBank | **none** | one contract per lender — **the partition** |
 | `Cash` (`Cash.daml`) | issuer, owner | — | the payment leg; issuer-mediated transfers |
-| `Settlement.daml` | (choices carry {signatory ∪ controller} authority) | — | `DrawdownRequest`/`RepaymentRequest` + secondary `TradeProposal → Accept → SettleTrade` |
-| `CovenantMonitor` (`Covenant.daml`) | agentBank | co-pilot `agent` party | on-ledger covenant guardrail; `AssessDrawdown` aborts a breach |
+| `Settlement.daml` | (choices carry {signatory ∪ controller} authority) | — | `DrawdownRequest` (`SettleDrawdown` enforces the covenant in-transaction; `CancelDrawdownRequest` for cleanup) / `RepaymentRequest` + secondary `TradeProposal → Accept → SettleTrade` |
+| `CovenantMonitor` (`Covenant.daml`) | agentBank | co-pilot `agent` party | on-ledger covenant guardrail; `AssessDrawdown` (read-only pre-check) + `RecordDrawdown` (exercised inside `SettleDrawdown` — atomic gate, tracks debt cumulatively) |
 | `AgentAuthorization` (`Roles.daml`) | agentBank | co-pilot `agent` party | scoped, revocable grant bounding the co-pilot |
 
 The Daml language (templates, signatory/observer privacy, choices, Daml Script) is portable, so the
@@ -137,11 +137,27 @@ it can only ever execute what it's authorized to:
    and the leverage impact of a proposed draw is recomputed deterministically — if it breaches the
    cap, the guardrail forces `block` **even when the model said `allow`**.
 3. **On-ledger enforcement.** `daml/Syndicate/Covenant.daml` `CovenantMonitor` (signatory agentBank,
-   observer the co-pilot's `agent` party) carries the financial snapshot + the leverage cap and
-   exposes a `nonconsuming AssessDrawdown` choice controlled by the agent: a compliant draw returns
-   the projected leverage; a **breaching draw aborts the transaction**, and only the authorized agent
-   party can exercise it. This is the Daml analogue of `guardrails.ts` (`projectedLeverage` /
-   `LEVERAGE_CAP`), proved by `daml/Syndicate/Tests/CovenantTest.daml`.
+   observer the co-pilot's `agent` party) carries the financial snapshot + the leverage cap. It
+   exposes two choices:
+   - `nonconsuming AssessDrawdown` (controller: the agent) — the co-pilot's **read-only pre-check**:
+     a compliant draw returns the projected leverage; a breaching draw aborts. This drives the UI's
+     covenant verdict without moving anything.
+   - `RecordDrawdown` (controller: agentBank) — the **authoritative gate**, exercised *inside*
+     `SettleDrawdown` in the **same transaction** as the money legs, so there is no time-of-check /
+     time-of-use gap: a breaching draw aborts the whole settlement (no cash or position moves). It
+     also raises `totalDebt`, so a run of individually-compliant draws that **cumulatively** cross
+     the cap is caught on the draw that breaches.
+
+   Only the authorized parties can exercise these. This is the Daml analogue of `guardrails.ts`
+   (`projectedLeverage` / `LEVERAGE_CAP`), proved by `CovenantTest.daml` and
+   `SettlementTest.daml::testCumulativeCovenantBlocksAtomically`.
+
+**Public API hardening.** The write/LLM routes (`/api/settle`, `/api/copilot`) are guarded
+(`web/lib/apiGuard.ts`): same-origin enforcement + per-IP rate limiting, plus an optional shared
+secret (`APP_WRITE_SECRET`) to lock a private deployment. The public demo stays anonymously
+drivable, but the open internet cannot drive real DevNet writes or exhaust the DeepSeek key. All
+real-ledger reads/writes are scoped to the current `DAML_PACKAGE_ID`, so the app only ever interprets
+its own package's contracts on the shared validator.
 
 The sim ledger (`web/lib/store.ts`) also independently rejects a breaching draw before any leg moves,
 so the "both legs or neither" invariant holds regardless of the model — and the frontend swaps onto
@@ -189,14 +205,16 @@ change behind unchanged `web/app/api/*` and UI (`web/lib/ledger.ts` holds the JS
 Deploying to **Canton Network DevNet** (the live submission target). Verified against
 docs.digitalasset.com, docs.sync.global, and the cn-quickstart repo (2026-07).
 
-**Status (achieved, partially gated).** The LF-2 DAR is uploaded to the hackathon's shared Seaport
-validator (fivenorth) and **real contracts run on-ledger** (`Facility`, `Cash`, `DrawdownRequest`),
-created + queried over the JSON Ledger API v2 and surfaced live in the deployed product's "Live on
-Canton DevNet" banner (`web/app/api/devnet/route.ts`). The **full 5-party seed** (3 `LenderPosition`
-+ per-lender `Cash`) is blocked externally: the shared M2M ledger user is at its per-user rights cap
-(`TOO_MANY_USER_RIGHTS`), so it cannot `actAs` all six demo parties at once. The seed scripts
-(`scripts/deploy-shared.sh`) run to completion the moment a dedicated ledger user / org grant lands;
-nothing in the code is waiting.
+**Status (live).** The LF-2 DAR (`syndicatev3` v0.3.0) is uploaded to the hackathon's shared Seaport
+validator (fivenorth); the **full facility is seeded** (`Facility`, 3 `LenderPosition`, per-lender
+`Cash`, `AgentAuthorization`, `CovenantMonitor`) and the **deployed product reads and writes it**:
+each role's view is queried from the ledger as that party (partition enforced by the participant), a
+drawdown settles as a real on-ledger transaction, and a breaching draw is rejected by
+`CovenantMonitor`. The shared M2M ledger user (id 6) was granted `actAs` over all six demo parties —
+the earlier `TOO_MANY_USER_RIGHTS` cap that blocked the multi-party seed has since cleared — and it
+already holds `CanReadAsAnyParty` + `ParticipantAdmin`, so per-role reads need no extra grants. Real
+mode is opt-in via env and falls back to the in-memory sim on any failure, so the live demo can never
+break. `scripts/reset-devnet.ts` + `init-ledger.ts` re-seed a pristine facility.
 
 ### Two hard prerequisites
 1. **LF-2 DAR.** The model must be built with an **SDK 3.4.x** toolchain (Daml-LF **2.x**); a
@@ -247,10 +265,10 @@ The whole seed + verify pipeline is validated against a **real Canton 3.x partic
 ```bash
 source scripts/daml-env.sh
 cd daml && daml build && \
-  daml sandbox --dar .daml/dist/syndicate-0.2.0.dar --json-api-port 7575 &   # JSON API v2, dev auth off
+  daml sandbox --dar .daml/dist/syndicatev3-0.3.0.dar --json-api-port 7575 &   # JSON API v2, dev auth off
 cd .. && ( cd scripts && npm install )
 export LEDGER_JSON_API_URL=http://127.0.0.1:7575 LEDGER_JWT_SECRET=dev LEDGER_APP_USER=syndicate-app
-export DAML_PACKAGE_ID=$(daml damlc inspect-dar --json daml/.daml/dist/syndicate-0.2.0.dar | jq -r .main_package_id)
+export DAML_PACKAGE_ID=$(daml damlc inspect-dar --json daml/.daml/dist/syndicatev3-0.3.0.dar | jq -r .main_package_id)
 scripts/node_modules/.bin/tsx scripts/allocate-parties.ts
 scripts/node_modules/.bin/tsx scripts/init-ledger.ts
 scripts/node_modules/.bin/tsx scripts/verify-privacy.ts   # asserts Lender A sees only its own slice
@@ -271,6 +289,13 @@ Source: [LocalNet](https://docs.sync.global/app_dev/localnet.html),
 - **Local dev/tests + the DevNet DAR: Daml SDK 3.4.11 → Daml-LF 2.x.** Canton 3.x (DevNet) runs LF
   2.x; a 2.10.4/LF-1.x DAR is not accepted. (Earlier phases used 2.10.4 for a fast local loop; the
   model is written in the portable subset, so the migration was a retarget plus a few API fixes.)
+- **Package: `syndicatev3` v0.3.0.** Modules stay `Syndicate.*`; identity is by package id. The
+  package was renamed from `syndicate` at v0.3.0 because making `SettleDrawdown` enforce the covenant
+  in-transaction is a deliberately breaking change to a choice — Canton rejects an incompatible
+  *upgrade* of a same-named package, so this ships as a new package rather than a v0.2.0 upgrade. The
+  web and the seed/verify scripts filter active contracts by the current package id, so an older
+  package version's contracts on the shared validator are ignored. `scripts/reset-devnet.ts` archives
+  the current package's contracts for a clean re-seed.
 - JDK 17 (Temurin), user-local. `source scripts/daml-env.sh` puts both on PATH.
 
 ---
@@ -283,7 +308,15 @@ Recorded so the next session doesn't re-learn them:
   test helper) does not exist under SDK 3.4.x — drop it; `queryContractId` needs only `Template t`.
 - **Daml-LF major split.** No public single-page LF↔Canton matrix; LF 1.x (2.x SDKs) and LF 2.x
   (3.x SDKs) are different majors and not cross-compatible on a participant.
-- **The shared M2M ledger user is rights-capped.** Granting `actAs` over all six demo parties trips
-  `TOO_MANY_USER_RIGHTS`; the full multi-lender seed needs a dedicated user or org grant.
+- **The shared M2M ledger user's rights cap (`TOO_MANY_USER_RIGHTS`).** Earlier this blocked granting
+  `actAs` over all six demo parties; it has since cleared and all six grants now succeed. The user
+  also holds `CanReadAsAnyParty` (per-role reads need no grants) + `ParticipantAdmin`. A single OIDC
+  M2M client binds to one ledger user, so writes are pinned to whatever `actAs` grants that user has.
 - **This validator encodes `Int`/`Numeric` as JSON strings** on the JSON Ledger API — the seed
   scripts send numeric fields as strings accordingly.
+- **Daml tuples encode as `{_1, _2}` objects** (not arrays), and an `Optional` field as the value (or
+  `null`) — relevant when building `SettleDrawdown` arguments over the JSON API.
+- **Smart-contract upgrade checks on upload.** Uploading a same-named package at a higher version is
+  vetted as an *upgrade*: a choice's return type can't change and new fields must be trailing
+  `Optional`. A deliberately breaking model change ships as a new package name instead (see
+  Toolchain).

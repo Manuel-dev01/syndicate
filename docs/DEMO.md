@@ -54,9 +54,16 @@ thesis in one control: the partition is real, and it's enforced on the server, n
    banner reads **"Rejected — would breach net-leverage covenant 5.0× … nothing moved."**
 
    > **The point:** there *is* undrawn capacity for this draw — a naive system would allow it. The
-   > guardrail, not the prompt, is the authority. The same check exists on-ledger: the Daml
-   > `CovenantMonitor.AssessDrawdown` choice **aborts** a breaching draw (see
-   > [daml/Syndicate/Covenant.daml](../daml/Syndicate/Covenant.daml) and its test).
+   > guardrail, not the prompt, is the authority. And it is the *ledger's*: `CovenantMonitor`
+   > `AssessDrawdown` gives the co-pilot's read-only verdict, and `RecordDrawdown` — exercised
+   > **inside** `SettleDrawdown`, in the same transaction as the money legs — aborts a breaching draw
+   > so no cash or position can move (it also tracks debt cumulatively, so a run of small compliant
+   > draws that together cross the cap is caught). See
+   > [daml/Syndicate/Covenant.daml](../daml/Syndicate/Covenant.daml),
+   > [Settlement.daml](../daml/Syndicate/Settlement.daml), and their tests.
+
+   > In **real-ledger mode** (deployed on Canton DevNet) this beat is the ledger's own rejection: the
+   > banner reads **"Rejected on-ledger"** and the co-pilot rail is badged **verified · on Canton**.
 
 ### 4 · Run a confidential secondary trade — *originality*
 1. **View as → Lender A**; spine → **Secondary.**

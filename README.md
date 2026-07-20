@@ -121,8 +121,8 @@ The model expresses **shared-but-partitioned** state ([daml/Syndicate/](daml/Syn
 | `Facility` | borrower + agent bank | the shared spine — facility terms, **no per-lender data** |
 | `LenderPosition` | that lender + agent bank | one contract per lender — **the privacy partition** |
 | `Cash` | issuer + owner | the payment leg |
-| `Settlement` | (choices) | atomic drawdown / repayment + secondary **DvP** — both legs in one transaction |
-| `CovenantMonitor` | agent bank (observer: co-pilot) | on-ledger covenant guardrail — a breaching draw **aborts** |
+| `Settlement` | (choices) | atomic drawdown / repayment + secondary **DvP** — both legs in one transaction; the drawdown enforces the covenant **in the same transaction** |
+| `CovenantMonitor` | agent bank (observer: co-pilot) | on-ledger covenant guardrail — a breaching draw **aborts**. `AssessDrawdown` is the co-pilot's read-only pre-check; `RecordDrawdown`, exercised **inside** `SettleDrawdown`, is the authoritative gate and tracks debt **cumulatively** |
 | `AgentAuthorization` | agent bank (observer: co-pilot) | the scoped, revocable grant that bounds the agent |
 
 Privacy and atomicity are **test targets**, not hopes: the Daml Script suite asserts Lender A cannot
@@ -139,7 +139,7 @@ Requires the **Daml SDK 3.4.11** and a **JDK 17+**.
 source scripts/daml-env.sh          # puts Daml SDK 3.4.11 + JDK 17 on PATH (edit the paths inside)
 cd daml
 daml build                          # compiles to an LF-2 DAR (Canton 3.x / DevNet compatible)
-daml test                           # 13 Daml Script tests — all green
+daml test                           # 14 Daml Script tests — all green
 ```
 
 `daml test` runs the privacy-partition assertions, atomic-settlement checks, secondary-trade
@@ -178,18 +178,20 @@ Full rationale, the Canton/Daml decisions, and the DevNet runbook:
 
 Honest by design, because it matters for evaluation:
 
-- **Real and live on Canton DevNet:** the Daml model (LF-2, SDK 3.4.11) is uploaded to the shared
-  validator and real contracts run on-ledger (`Facility`, `Cash`, `DrawdownRequest`), created and
-  queried over the JSON Ledger API v2. The deployed product proves it with a server-side live-read
-  banner.
-- **Simulated for the interactive demo:** the `/app` product is backed by an in-memory ledger
-  (`web/lib/store.ts`) **typed to the exact Daml shapes** (`Facility` / `LenderPosition` / `Cash` /
-  `Settlement`). This lets the full five-role demo run with no infrastructure. The data layer swaps to
-  the DevNet JSON Ledger API behind the same interfaces — the UI never changes.
-- **Gated (external):** the full 5-party seed on DevNet needs a few more `actAs` grants than the
-  shared M2M user allows (`TOO_MANY_USER_RIGHTS`); the seed scripts run it end-to-end the moment a
-  dedicated ledger user / org grant is available. Locally, all five lifecycle stages + the
-  privacy/atomicity/covenant assertions pass on a real Canton participant (`daml test`).
+- **Live on Canton DevNet — real reads *and* writes.** The Daml model (`syndicatev3` v0.3.0, LF-2,
+  SDK 3.4.11) is uploaded to the shared validator, the full facility is seeded (`Facility`, 3
+  `LenderPosition`, per-lender `Cash`, `AgentAuthorization`, `CovenantMonitor`), and the **deployed
+  product runs against it**: each role's view is read from the ledger (the partition enforced by the
+  participant), a drawdown **settles as a real on-ledger transaction**, and a breaching draw is
+  **rejected by the ledger** (`CovenantMonitor` aborts). The co-pilot badges *verified · on Canton*
+  and settlements read *Settled on Canton DevNet* with the real update id.
+- **The sim is the safety net, not the demo.** Real-ledger mode is opt-in via env; on any real-mode
+  failure (or an unconfigured preview) the app falls back to the in-memory ledger (`web/lib/store.ts`),
+  **typed to the exact Daml shapes**, so the live demo can never break. Same interfaces, same UI.
+- **Reproducible on a real participant.** All five lifecycle stages + the privacy / atomicity /
+  covenant assertions pass on a real Canton ledger — `daml test` (14 Daml Script tests) and the
+  `scripts/verify-*.ts` checks (covenant abort, atomic settle, per-role privacy) against the JSON
+  Ledger API v2.
 
 ---
 
