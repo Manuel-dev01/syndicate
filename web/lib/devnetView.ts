@@ -16,11 +16,16 @@ interface Created {
 }
 
 function createdEvents(acs: unknown[]): Created[] {
+  // Interpret only the CURRENT package's contracts — older package versions of the same templates
+  // may still have live contracts on the shared validator.
+  const pkg = process.env.DAML_PACKAGE_ID;
   const out: Created[] = [];
   for (const item of acs) {
     const ce = (item as { contractEntry?: { JsActiveContract?: { createdEvent?: { templateId?: string; contractId?: string; createArgument?: Record<string, unknown> } } } })
       ?.contractEntry?.JsActiveContract?.createdEvent;
-    if (ce?.templateId && ce.contractId && ce.createArgument) out.push({ templateId: ce.templateId, contractId: ce.contractId, arg: ce.createArgument });
+    if (ce?.templateId && ce.contractId && ce.createArgument && (!pkg || ce.templateId.startsWith(`${pkg}:`))) {
+      out.push({ templateId: ce.templateId, contractId: ce.contractId, arg: ce.createArgument });
+    }
   }
   return out;
 }

@@ -131,7 +131,9 @@ export async function submitForTree(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         commands,
-        commandId: `syndicate-web-${Date.now()}`,
+        // Unique per submit: a bare timestamp collides for two submits in the same millisecond and
+        // Canton command-deduplication would reject the second as a duplicate.
+        commandId: `syndicate-web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
         actAs,
         readAs: opts.readAs ?? [],
         userId: opts.userId ?? APP_USER(),

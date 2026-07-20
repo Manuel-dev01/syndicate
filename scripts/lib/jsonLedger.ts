@@ -45,7 +45,8 @@ async function fetchOidcToken(): Promise<string> {
     body: form,
   });
   const body = (await res.json()) as { access_token?: string; expires_in?: number; error?: string };
-  if (!res.ok || !body.access_token) throw new Error(`OIDC token exchange failed: ${JSON.stringify(body)}`);
+  // Redact the IdP response body (may echo client/config detail) — surface only the error code.
+  if (!res.ok || !body.access_token) throw new Error(`OIDC token exchange failed${body.error ? ` (${body.error})` : ""}`);
   cached = { token: body.access_token, exp: now + (body.expires_in ?? 3600) * 1000 };
   return cached.token;
 }
@@ -131,7 +132,7 @@ export async function submitAndWait(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       commands,
-      commandId: `syndicate-${Date.now()}`,
+      commandId: `syndicate-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
       actAs,
       readAs: opts.readAs ?? [],
       userId: opts.userId ?? APP_USER(),
@@ -166,7 +167,7 @@ export async function submitAndWaitForTree(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       commands,
-      commandId: `syndicate-${Date.now()}`,
+      commandId: `syndicate-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
       actAs,
       readAs: opts.readAs ?? [],
       userId: opts.userId ?? APP_USER(),

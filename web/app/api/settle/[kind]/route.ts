@@ -19,6 +19,7 @@ import { isRealLedger } from "@/lib/ledgerMode";
 import { devnetView } from "@/lib/devnetView";
 import { settleDrawdown } from "@/lib/ledgerSettle";
 import { LedgerError } from "@/lib/ledgerClient";
+import { guard } from "@/lib/apiGuard";
 
 export const dynamic = "force-dynamic";
 // Real-ledger settlement chains several Canton round-trips (~2-3s each). Lift the function budget
@@ -32,6 +33,10 @@ export const maxDuration = 60;
 // move without the position leg. Who may authorize is role-scoped: lenders act on their own slice,
 // the agent bank authorizes facility-wide, the borrower may only request (not settle).
 export async function POST(req: Request, { params }: { params: { kind: string } }) {
+  // Settlement can drive REAL on-ledger writes — refuse cross-origin callers and rate-limit per IP.
+  const g = guard(req, "settle", 20);
+  if (!g.ok) return NextResponse.json({ error: g.error }, { status: g.status });
+
   const s = getStore();
   const body = (await req.json().catch(() => ({}))) as {
     role?: string;

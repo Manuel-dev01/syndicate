@@ -2,8 +2,11 @@
 # Built with Daml SDK 3.4.x → Daml-LF 2.x, the version Canton 3.x / DevNet accepts. The model is
 # written in the portable subset; the 2.x→3.x delta is a few Daml Script API fixes (see git log).
 sdk-version: 3.4.11
-name: syndicate
-version: 0.2.0
+# Renamed from `syndicate` at v0.3.0: this iteration makes SettleDrawdown enforce the covenant
+# in-transaction (a deliberately breaking change to the choice), so it is a NEW package rather than a
+# smart-contract upgrade of the v0.2.0 line. Modules stay `Syndicate.*`; identity is by package id.
+name: syndicatev3
+version: 0.3.0
 source: .
 # Test scripts are co-located under Syndicate/Tests (one source root per project).
 dependencies:

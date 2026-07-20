@@ -25,7 +25,10 @@ function parse(acs: unknown[]): Created[] {
 
 async function contractsOf(party: string, suffix: string): Promise<Created[]> {
   const acs = await withLedgerTimeout((s) => activeContracts(party, s));
-  return parse(acs).filter((e) => e.templateId.endsWith(suffix));
+  // Filter to the CURRENT package id: earlier package versions of the same templates may still have
+  // live contracts on the shared validator, and we must interpret only our own package's contracts.
+  const pkg = process.env.DAML_PACKAGE_ID;
+  return parse(acs).filter((e) => e.templateId.endsWith(suffix) && (!pkg || e.templateId.startsWith(`${pkg}:`)));
 }
 
 export interface AssessResult {
@@ -81,27 +84,34 @@ export async function settleDrawdown(amount: number): Promise<{ updateId?: strin
     throw new Error(assess.error ?? "covenant assessment unavailable");
   }
 
-  // 2. Borrower requests the draw (a DrawdownRequest is just a request — no cash/position moves).
-  await withLedgerTimeout((s) =>
-    submitForTree(
-      [borrower],
-      [createCommand(templateId("Syndicate.Settlement:DrawdownRequest"), { facilityId: facilityId(), borrower, agentBank: ab, amount: dec(amount) })],
-      { signal: s },
-    ),
-  );
+  // 2. Ensure a DrawdownRequest for this facility + amount exists. Reuse an existing one (e.g. an
+  // orphan left by a prior interrupted settle) rather than creating a duplicate that would accumulate.
+  const fid = facilityId();
+  const already = (await contractsOf(ab, ":DrawdownRequest")).find((r) => r.arg.facilityId === fid && r.arg.amount === dec(amount));
+  if (!already) {
+    await withLedgerTimeout((s) =>
+      submitForTree(
+        [borrower],
+        [createCommand(templateId("Syndicate.Settlement:DrawdownRequest"), { facilityId: fid, borrower, agentBank: ab, amount: dec(amount) })],
+        { signal: s },
+      ),
+    );
+  }
 
-  // 3. Agent bank settles: fund every lender pro-rata (position + that lender's cash), one commit.
-  const [req, fac, positions, cash] = await Promise.all([
+  // 3. Agent bank settles: enforce the covenant (in-transaction), fund every lender pro-rata
+  // (position + that lender's cash), and hand the borrower cash — one atomic commit.
+  const [req, fac, positions, cash, monitors] = await Promise.all([
     contractsOf(ab, ":DrawdownRequest"),
     contractsOf(ab, ":Facility"),
     contractsOf(ab, ":LenderPosition"),
     contractsOf(ab, ":Cash"),
+    contractsOf(ab, ":CovenantMonitor"),
   ]);
-  // Correlate to THE request we just created (this facility + this amount), not an arbitrary [0]:
-  // a stale/orphaned request from a prior failed settle would otherwise settle the wrong amount.
-  const fid = facilityId();
+  // Correlate to THE request for this facility + amount, not an arbitrary [0]: a stale/orphaned
+  // request with a different amount would otherwise settle the wrong figure.
   const drawReq = req.find((r) => r.arg.facilityId === fid && r.arg.amount === dec(amount)) ?? req[0];
-  if (!drawReq || !fac[0]) throw new Error("could not resolve drawdown contracts on-ledger");
+  const monitor = monitors.find((m) => m.arg.facilityId === fid) ?? monitors[0];
+  if (!drawReq || !fac[0] || !monitor) throw new Error("could not resolve drawdown contracts on-ledger");
   // Daml tuples (ContractId LenderPosition, ContractId Cash) encode as {_1, _2} objects.
   const fundings = positions
     .map((p) => {
@@ -111,16 +121,21 @@ export async function settleDrawdown(amount: number): Promise<{ updateId?: strin
     .filter((f): f is { _1: string; _2: string } => f !== null);
   if (!fundings.length) throw new Error("no fundable lender positions on-ledger");
 
-  // The settlement itself moves money. If it fails here (contention, timeout, auth) the ledger state
-  // is uncertain, so we must NOT fall back to the sim and re-apply the draw — surface a LedgerError
-  // (→ 400 "nothing moved") rather than risk a double count divergent from the ledger.
+  // The settlement itself moves money AND enforces the covenant in the same transaction (monitorCid;
+  // an Optional field encodes as the value for Some). If it fails here (a real covenant breach, or
+  // contention/timeout/auth) the ledger state is uncertain, so we must NOT fall back to the sim and
+  // re-apply the draw — surface a LedgerError (→ 400 "nothing moved").
   let res;
   try {
     res = await withLedgerTimeout((s) =>
-      submitForTree([ab], [exerciseCommand(drawReq.templateId, drawReq.contractId, "SettleDrawdown", { facilityCid: fac[0].contractId, fundings })], { signal: s }),
+      submitForTree(
+        [ab],
+        [exerciseCommand(drawReq.templateId, drawReq.contractId, "SettleDrawdown", { facilityCid: fac[0].contractId, fundings, monitorCid: monitor.contractId })],
+        { signal: s },
+      ),
     );
   } catch (e) {
-    if (e instanceof LedgerError) throw e; // a real ledger rejection — surface as-is
+    if (e instanceof LedgerError) throw e; // a real ledger rejection (covenant breach etc.) — surface as-is
     throw new LedgerError("drawdown settlement did not confirm on-ledger — nothing moved");
   }
   return { updateId: res.updateId };

@@ -11,6 +11,7 @@ import {
 import type { LedgerStore } from "@/lib/store";
 import { isRealLedger } from "@/lib/ledgerMode";
 import { assessDrawdown } from "@/lib/ledgerSettle";
+import { guard } from "@/lib/apiGuard";
 
 // Real-ledger covenant verdict: exercise CovenantMonitor.AssessDrawdown on Canton. A breach ABORTS
 // on-ledger, so the co-pilot's block is the ledger's, not the prompt's. Returns null if unreachable
@@ -160,6 +161,11 @@ function scripted(stage: string, s: LedgerStore, draw: number | undefined): Prop
 }
 
 export async function POST(req: Request) {
+  // The co-pilot proxies to the paid DeepSeek API and can exercise on-ledger — refuse cross-origin
+  // callers and rate-limit per IP so an anonymous caller can't exhaust the key or the ledger.
+  const g = guard(req, "copilot", 40);
+  if (!g.ok) return NextResponse.json({ error: g.error }, { status: g.status });
+
   const { stage = "origination", role = "lenderA", amount } = (await req.json().catch(() => ({}))) as {
     stage?: string;
     role?: string;

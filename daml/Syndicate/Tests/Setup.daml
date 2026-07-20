@@ -12,6 +12,7 @@ import Syndicate.Roles
 import Syndicate.Facility
 import Syndicate.Lender
 import Syndicate.Cash
+import Syndicate.Covenant
 
 facilityIdConst : Text
 facilityIdConst = "FAC-2026-001"
@@ -29,10 +30,12 @@ maturityConst = date 2029 Jun 30
 data DemoScenario = DemoScenario with
     borrower : Party
     agentBank : Party
+    agent : Party
     lenderA : Party
     lenderB : Party
     lenderC : Party
     facilityCid : ContractId Facility
+    monitorCid : ContractId CovenantMonitor
     posA : ContractId LenderPosition
     posB : ContractId LenderPosition
     posC : ContractId LenderPosition
@@ -67,6 +70,7 @@ setupScenario : Script DemoScenario
 setupScenario = do
   borrower  <- allocateParty "Borrower"
   agentBank <- allocateParty "AgentBank"
+  agent     <- allocateParty "CoPilot"
   lenderA   <- allocateParty "LenderA"
   lenderB   <- allocateParty "LenderB"
   lenderC   <- allocateParty "LenderC"
@@ -80,6 +84,17 @@ setupScenario = do
       currency = "USD"
       interestRateBps = rateBpsConst
       maturityDate = maturityConst
+
+  -- Covenant monitor: EBITDA $100M, base debt $350M, cap 5.0× (headroom to $500M). The standard
+  -- $50M demo draws stay well inside; the cumulative-covenant test uses its own tighter monitor.
+  monitorCid <- submit agentBank $ createCmd CovenantMonitor with
+    facilityId = facilityIdConst
+    agentBank
+    agent
+    ebitda = 100000000.0
+    totalDebt = 350000000.0
+    leverageCap = 5.0
+    scope = "read covenant + borrower financials; assess drawdown"
 
   posA <- createPosition agentBank lenderA 40000000.0
   posB <- createPosition agentBank lenderB 35000000.0

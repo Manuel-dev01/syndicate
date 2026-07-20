@@ -16,11 +16,16 @@ interface Created {
   createArgument: Record<string, unknown>;
 }
 function creates(acs: unknown): Created[] {
+  // Scope to the CURRENT package — older package versions of these templates may still be live on
+  // the shared validator and would otherwise double-count the partition check.
+  const pkg = process.env.DAML_PACKAGE_ID;
   const arr = Array.isArray(acs) ? acs : [];
   const out: Created[] = [];
   for (const item of arr) {
     const ce = (item as any)?.contractEntry?.JsActiveContract?.createdEvent;
-    if (ce?.templateId) out.push({ templateId: ce.templateId, createArgument: ce.createArgument ?? {} });
+    if (ce?.templateId && (!pkg || ce.templateId.startsWith(`${pkg}:`))) {
+      out.push({ templateId: ce.templateId, createArgument: ce.createArgument ?? {} });
+    }
   }
   return out;
 }

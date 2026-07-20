@@ -25,7 +25,10 @@ function parse(acs: unknown[]): Created[] {
   return out;
 }
 async function of(party: string, suffix: string): Promise<Created[]> {
-  return parse(await activeContracts(party)).filter((e) => e.templateId.endsWith(suffix));
+  const pkg = process.env.DAML_PACKAGE_ID;
+  return parse(await activeContracts(party)).filter(
+    (e) => e.templateId.endsWith(suffix) && (!pkg || e.templateId.startsWith(`${pkg}:`)),
+  );
 }
 async function timed<T>(label: string, fn: () => Promise<T>): Promise<T> {
   const t0 = Date.now();
@@ -62,9 +65,10 @@ async function main() {
     .map((pos) => { const c = cash.find((x) => x.arg.owner === pos.arg.lender); return c ? { _1: pos.contractId, _2: c.contractId } : null; })
     .filter((f): f is { _1: string; _2: string } => f !== null);
 
+  const settleMon = (await of(p.agentBank, ":CovenantMonitor"))[0];
   const res = await timed("SettleDrawdown (agentBank)", () =>
     submitAndWaitForTree([p.agentBank], [exerciseCommand(req[0].templateId, req[0].contractId,
-      "SettleDrawdown", { facilityCid: fac[0].contractId, fundings })]));
+      "SettleDrawdown", { facilityCid: fac[0].contractId, fundings, monitorCid: settleMon.contractId })]));
 
   const drawnAfter = (await of(p.agentBank, ":LenderPosition")).reduce((s, c) => s + Number(c.arg.drawn), 0);
   const upd = (res as any).updateId ?? (res as any).transactionTree?.updateId;

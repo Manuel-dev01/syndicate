@@ -25,10 +25,12 @@ interface Parties {
 }
 
 function findMonitor(acs: unknown[]): string | undefined {
+  // Match the CURRENT package's CovenantMonitor exactly — an older package version's monitor may
+  // still be live on the shared validator and cannot be exercised with this package's choices.
   for (const item of acs) {
     const ce = (item as { contractEntry?: { JsActiveContract?: { createdEvent?: { templateId?: string; contractId?: string } } } })
       ?.contractEntry?.JsActiveContract?.createdEvent;
-    if (ce?.templateId?.endsWith(":CovenantMonitor") && ce.contractId) return ce.contractId;
+    if (ce?.templateId === MONITOR_TID() && ce.contractId) return ce.contractId;
   }
   return undefined;
 }

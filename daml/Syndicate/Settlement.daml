@@ -15,6 +15,7 @@ import Syndicate.Roles
 import Syndicate.Facility
 import Syndicate.Lender
 import Syndicate.Cash
+import Syndicate.Covenant
 
 -- | Fund each lender pro-rata to its commitment. The LAST lender absorbs any rounding dust so
 -- the funded total equals the requested amount exactly. Each `Fund` is a nested exercise, so the
@@ -69,21 +70,43 @@ template DrawdownRequest
     observer agentBank
     ensure amount > 0.0
 
-    -- | Settle the drawdown: fund each lender pro-rata AND hand the borrower its cash, atomically.
+    -- | Settle the drawdown: enforce the covenant, fund each lender pro-rata, AND hand the borrower
+    -- its cash — atomically. The covenant gate (RecordDrawdown) runs in THIS transaction, so no cash
+    -- or position can move unless the covenant holds at settlement time (no stale pre-flight), and
+    -- the draw is recorded so cumulative draws are tracked.
+    -- `monitorCid` is a TRAILING Optional field (Daml smart-contract-upgrade compatibility over
+    -- v0.2.0, which had no covenant gate here) but is REQUIRED at runtime.
     choice SettleDrawdown : ([ContractId LenderPosition], ContractId Cash)
       with
         facilityCid : ContractId Facility
         fundings : [(ContractId LenderPosition, ContractId Cash)]
+        monitorCid : Optional (ContractId CovenantMonitor)
       controller agentBank
       do
         fac <- fetch facilityCid
         assertMsg "Facility id must match the request" (fac.facilityId == facilityId)
         assertMsg "A drawdown must fund the whole syndicate" (not (null fundings))
+        mc <- case monitorCid of
+          Some c -> pure c
+          None -> abort "SettleDrawdown requires the covenant monitor"
+        mon <- fetch mc
+        assertMsg "Covenant monitor must match the facility" (mon.facilityId == facilityId)
+        assertMsg "Covenant monitor must share the agent bank" (mon.agentBank == agentBank)
+        -- Atomic + cumulative covenant gate: aborts the WHOLE settlement on a breach and records the
+        -- draw. The gate is part of this transaction — not a separate, spoofable pre-check.
+        _ <- exercise mc RecordDrawdown with drawAmount = amount
         (newPositions, funded) <- fundPositions fac.totalCommitment amount 0.0 fundings
         assertMsg "Funded total must equal the requested amount" (funded == amount)
         -- Borrower cash created here, where {borrower, agentBank} authority is available.
         borrowerCash <- create Cash with issuer = agentBank, owner = borrower, amount
         pure (newPositions, borrowerCash)
+
+    -- | Cancel an unsettled request — cleanup for an abandoned or failed settlement (no money is
+    -- involved in a request). The agent bank, which coordinates settlement, may archive a stale
+    -- request so it cannot later be picked up and settled with the wrong amount.
+    choice CancelDrawdownRequest : ()
+      controller agentBank
+      do pure ()
 
 -- | RepaymentRequest — the borrower's request to repay principal and/or accrued interest.
 --

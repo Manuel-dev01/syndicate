@@ -69,11 +69,14 @@ export async function GET() {
       })
     ).json()) as unknown[];
 
+    // Show only the CURRENT package's contracts — older package versions may still be live for this
+    // party on the shared validator, and mixing them would inflate/confuse the on-ledger proof.
+    const pkg = process.env.DAML_PACKAGE_ID;
     const contracts: DevnetContract[] = [];
     for (const item of Array.isArray(acs) ? acs : []) {
       const ce = (item as { contractEntry?: { JsActiveContract?: { createdEvent?: { templateId?: string; contractId?: string } } } })
         ?.contractEntry?.JsActiveContract?.createdEvent;
-      if (ce?.templateId && ce.contractId) {
+      if (ce?.templateId && ce.contractId && (!pkg || ce.templateId.startsWith(`${pkg}:`))) {
         contracts.push({ template: ce.templateId.split(":").slice(-1)[0], contractId: ce.contractId });
       }
     }

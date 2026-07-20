@@ -13,6 +13,7 @@ import DA.Optional (fromSome)
 import Syndicate.Facility ()
 import Syndicate.Lender
 import Syndicate.Cash
+import Syndicate.Covenant
 import Syndicate.Settlement
 import Syndicate.Tests.Setup
 
@@ -33,6 +34,7 @@ drawFiftyMillion s = do
     amount = 50000000.0
   (newPositions, _) <- submit s.agentBank $ exerciseCmd drCid SettleDrawdown with
     facilityCid = s.facilityCid
+    monitorCid = Some s.monitorCid
     fundings = standardFundings s
   pure newPositions
 
@@ -47,6 +49,7 @@ testDrawdownAtomic = do
     amount = 50000000.0
   (newPositions, borrowerCash) <- submit s.agentBank $ exerciseCmd drCid SettleDrawdown with
     facilityCid = s.facilityCid
+    monitorCid = Some s.monitorCid
     fundings = standardFundings s
   let [npA, npB, npC] = newPositions
 
@@ -78,6 +81,58 @@ testDrawdownAtomic = do
   borrowerPositions <- query @LenderPosition s.borrower
   assertMsg "Borrower must not see any LenderPosition" (null borrowerPositions)
 
+-- (1b) Cumulative + atomic covenant: two individually-compliant draws where the SECOND crosses the
+-- cap cumulatively — the settlement that breaches ABORTS entirely (covenant gate is in-transaction),
+-- and the first draw's debt was recorded so the cap tightens as the facility draws.
+testCumulativeCovenantBlocksAtomically : Script ()
+testCumulativeCovenantBlocksAtomically = do
+  s <- setupScenario
+  -- A tight monitor: EBITDA $100M, base debt $440M, cap 5.0× → only $60M of headroom to the $500M cap.
+  tightMon <- submit s.agentBank $ createCmd CovenantMonitor with
+    facilityId = facilityIdConst
+    agentBank = s.agentBank
+    agent = s.agent
+    ebitda = 100000000.0
+    totalDebt = 440000000.0
+    leverageCap = 5.0
+    scope = "cumulative covenant test"
+
+  -- First $50M draw: (440 + 50)/100 = 4.9× — compliant. Settles; records debt → $490M.
+  dr1 <- submit s.borrower $ createCmd DrawdownRequest with
+    facilityId = facilityIdConst
+    borrower = s.borrower
+    agentBank = s.agentBank
+    amount = 50000000.0
+  (pos1, _) <- submit s.agentBank $ exerciseCmd dr1 SettleDrawdown with
+    facilityCid = s.facilityCid
+    monitorCid = Some tightMon
+    fundings = standardFundings s
+  let [npA, npB, npC] = pos1
+  -- RecordDrawdown archived tightMon and recreated it at $490M; find that recreated monitor.
+  mons <- query @CovenantMonitor s.agentBank
+  let [mon2] = [cid | (cid, m) <- mons, m.totalDebt == 490000000.0]
+
+  -- Second $50M draw: cumulatively (490 + 50)/100 = 5.4× — BREACHES. Fund cash exists, so the ONLY
+  -- reason to fail is the covenant — and it aborts the whole settlement atomically.
+  c2A <- mintCash s.agentBank s.lenderA 20000000.0
+  c2B <- mintCash s.agentBank s.lenderB 17500000.0
+  c2C <- mintCash s.agentBank s.lenderC 12500000.0
+  dr2 <- submit s.borrower $ createCmd DrawdownRequest with
+    facilityId = facilityIdConst
+    borrower = s.borrower
+    agentBank = s.agentBank
+    amount = 50000000.0
+  submitMustFail s.agentBank $ exerciseCmd dr2 SettleDrawdown with
+    facilityCid = s.facilityCid
+    monitorCid = Some mon2
+    fundings = [(npA, c2A), (npB, c2B), (npC, c2C)]
+
+  -- Nothing moved on the breaching draw: the monitor still reads $490M, position A still $20M drawn.
+  m3 <- mustSee s.agentBank mon2
+  m3.totalDebt === 490000000.0
+  pA <- mustSee s.agentBank npA
+  pA.drawn === 20000000.0
+
 -- (2) THE atomicity proof: an invalid settle rolls back completely — all or nothing.
 testDrawdownRollbackIsAllOrNothing : Script ()
 testDrawdownRollbackIsAllOrNothing = do
@@ -91,6 +146,7 @@ testDrawdownRollbackIsAllOrNothing = do
     amount = 120000000.0
   submitMustFail s.agentBank $ exerciseCmd drCid SettleDrawdown with
     facilityCid = s.facilityCid
+    monitorCid = Some s.monitorCid
     fundings = standardFundings s
 
   -- NOTHING moved: positions still undrawn, lender cash intact, borrower has no cash.
@@ -126,6 +182,7 @@ testRepaymentAtomic = do
     amount = 50000000.0
   (newPositions, borrowerCash) <- submit s.agentBank $ exerciseCmd drCid SettleDrawdown with
     facilityCid = s.facilityCid
+    monitorCid = Some s.monitorCid
     fundings = standardFundings s
   let [npA, npB, npC] = newPositions
 

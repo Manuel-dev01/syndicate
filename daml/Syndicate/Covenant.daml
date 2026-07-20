@@ -61,6 +61,25 @@ template CovenantMonitor
           (projected <= leverageCap)
         pure projected
 
+    -- | RecordDrawdown — the AUTHORITATIVE covenant gate, exercised INSIDE SettleDrawdown (unlike the
+    -- non-consuming AssessDrawdown, which is only the Co-Pilot's read-only pre-check). It (a) aborts
+    -- the whole settlement on a breach — so the covenant test and the money move are one transaction,
+    -- with no time-of-check/time-of-use gap — and (b) records the draw by raising totalDebt, so a
+    -- sequence of individually-compliant draws that cumulatively cross the cap is caught on the draw
+    -- that breaches. Controller agentBank (the monitor's sole signatory), whose authority the
+    -- settlement transaction already holds.
+    choice RecordDrawdown : ContractId CovenantMonitor
+      with
+        drawAmount : Decimal
+      controller agentBank
+      do
+        assertMsg "drawAmount must be >= 0" (drawAmount >= 0.0)
+        let projected = (totalDebt + drawAmount) / ebitda
+        assertMsg
+          ("Proposed draw breaches the net-leverage covenant (" <> show leverageCap <> "x)")
+          (projected <= leverageCap)
+        create this with totalDebt = totalDebt + drawAmount
+
     -- | The agent bank can revise the financial snapshot as the borrower reports new figures.
     choice UpdateFinancials : ContractId CovenantMonitor
       with
