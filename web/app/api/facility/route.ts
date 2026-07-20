@@ -6,6 +6,9 @@ import { isRealLedger } from "@/lib/ledgerMode";
 import { devnetView } from "@/lib/devnetView";
 
 export const dynamic = "force-dynamic";
+// Real-mode reads query Canton (ledger-end + active-contracts) per request; keep clear of Vercel's
+// 10s Hobby default. No-op in sim mode.
+export const maxDuration = 60;
 
 // GET /api/facility?role=lenderA — the role's view of the ONE shared facility.
 // In real-ledger mode this is READ FROM CANTON: active-contracts queried AS the role's party, so the
@@ -17,7 +20,7 @@ export async function GET(req: Request) {
     try {
       return NextResponse.json(await devnetView(role));
     } catch {
-      // fall through to the sim
+      // fall through to the sim — the deployed demo never breaks on a real-ledger hiccup
     }
   }
   return NextResponse.json(viewAs(getStore(), role));

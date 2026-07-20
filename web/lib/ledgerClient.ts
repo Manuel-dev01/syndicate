@@ -35,6 +35,7 @@ async function oidcToken(signal: AbortSignal): Promise<string> {
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: form,
     signal,
+    cache: "no-store",
   });
   const body = (await res.json()) as { access_token?: string; expires_in?: number };
   if (!res.ok || !body.access_token) throw new LedgerError("OIDC token exchange failed");
@@ -93,9 +94,14 @@ function damlErrorMessage(text: string, status: number): string {
 }
 
 async function ledgerFetch<T>(path: string, init: RequestInit, signal: AbortSignal): Promise<T> {
+  // cache: "no-store" is REQUIRED: Next.js patches global fetch and its caching/instrumentation
+  // layer drops the Authorization header on the POST to /v2/state/active-contracts, which the
+  // validator then rejects as UNAUTHENTICATED ("A security-sensitive error has been received").
+  // Opting out of Next's fetch cache sends the request untouched. (Plain Node fetch is unaffected.)
   const res = await fetch(`${BASE()}${path}`, {
     ...init,
     signal,
+    cache: "no-store",
     headers: { authorization: `Bearer ${await token(signal)}`, ...init.headers },
   });
   const text = await res.text();

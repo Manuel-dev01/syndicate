@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+// Reads the shared DevNet validator (OIDC + ledger queries); keep clear of the 10s Hobby default.
+export const maxDuration = 60;
 
 // GET /api/devnet — proves the app is live on Canton DevNet by reading the REAL shared validator's
 // JSON Ledger API v2 (server-side; the OIDC secret never reaches the browser). Returns the current

@@ -21,6 +21,10 @@ import { settleDrawdown } from "@/lib/ledgerSettle";
 import { LedgerError } from "@/lib/ledgerClient";
 
 export const dynamic = "force-dynamic";
+// Real-ledger settlement chains several Canton round-trips (~2-3s each). Lift the function budget
+// above Vercel's 10s Hobby default so a real settle can complete instead of 504-ing before its own
+// graceful sim fallback runs. Harmless in sim mode (returns in ms).
+export const maxDuration = 60;
 
 // POST /api/settle/{drawdown|interest|repayment|secondary}  body: { role, amount?, notional?, price? }
 // Each maps 1:1 to a Daml settlement choice and moves BOTH legs together. An invariant breach — a

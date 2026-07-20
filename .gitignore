@@ -61,3 +61,5 @@ Thumbs.db
 canton-*/
 *.canton-state
 log/
+
+.vercel

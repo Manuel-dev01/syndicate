@@ -42,6 +42,9 @@ async function onLedgerAssessment(s: LedgerStore, draw: number): Promise<Proposa
 }
 
 export const dynamic = "force-dynamic";
+// The co-pilot may call DeepSeek AND exercise the on-ledger covenant gate; both add latency. Lift the
+// budget above Vercel's 10s Hobby default (falls back to scripted/sim well within this).
+export const maxDuration = 60;
 
 // POST /api/copilot { stage, role, amount? } — the Agent-Bank Co-Pilot. It reads the borrower's
 // PRIVATE financials need-to-know and reasons about covenant health + the compliant settlement
