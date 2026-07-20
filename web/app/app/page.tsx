@@ -779,6 +779,16 @@ function SettleBanner({ record, error, pending }: { record: SettlementRecord | n
     );
   }
   if (record) {
+    // A "projection" record is an off-ledger lifecycle illustration against the real facility (this
+    // build settles drawdowns on Canton) — label it honestly, never as an on-ledger settlement.
+    if (record.txRef === "projection") {
+      return (
+        <div className="font-mono" style={{ marginBottom: 20, border: `2px solid #a3611f`, background: "#fbf3e8", color: "#7a4a12", padding: "12px 16px", fontSize: 12, letterSpacing: ".04em", fontWeight: 700 }}>
+          ◑ Projection · {record.label.replace(/ · projection$/, "")} — cash {money(record.cashLeg, { sign: true })} · position {money(record.positionLeg, { sign: true })}
+          <span style={{ color: "#9a7a4a", fontWeight: 400 }}> · on-ledger settlement in this build covers drawdowns.</span>
+        </div>
+      );
+    }
     const onLedger = record.txRef.startsWith("ledger:");
     return (
       <div className="font-mono" style={{ marginBottom: 20, border: `2px solid ${INK}`, background: MINT, color: INK, padding: "12px 16px", fontSize: 12, letterSpacing: ".04em", fontWeight: 700 }}>

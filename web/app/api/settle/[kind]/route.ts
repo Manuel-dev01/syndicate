@@ -86,6 +86,34 @@ export async function POST(req: Request, { params }: { params: { kind: string } 
     }
   }
 
+  // Real-ledger mode, non-drawdown legs: this build settles DRAWDOWNS on Canton. Interest / repayment
+  // / secondary are shown against the REAL facility as clearly-labeled PROJECTIONS — we return the
+  // live ledger view (unchanged) so the screen never diverges into the sim's separate state, and mark
+  // the record `projection` so the UI is honest about what did (and didn't) hit the ledger.
+  if (isRealLedger() && params.kind !== "drawdown") {
+    if (params.kind === "secondary" && isAgent) {
+      return NextResponse.json({ error: "Secondary trades are executed by lenders, not the agent bank." }, { status: 400 });
+    }
+    const view = await devnetView(role).catch(() => viewAs(s, role));
+    const p = view.position;
+    const base = { id: `pj-${Date.now()}`, date: new Date().toISOString().slice(0, 10), txRef: "projection", status: "settled" as const };
+    let record;
+    if (params.kind === "interest") {
+      record = { ...base, kind: "interest" as const, label: "Interest distribution · projection", cashLeg: p.accruedInterest, positionLeg: 0 };
+    } else if (params.kind === "repayment") {
+      const amt = body.amount ?? FACILITY_AMORT;
+      const share = isAgent ? amt : Math.round(amt * (p.holdPct / 100));
+      record = { ...base, kind: "repayment" as const, label: "Amortization · projection", cashLeg: share, positionLeg: -share };
+    } else if (params.kind === "secondary") {
+      const notional = body.notional ?? 8_000_000;
+      const proceeds = Math.round((notional * (body.price ?? 99.25)) / 100);
+      record = { ...base, kind: "secondary" as const, label: "Secondary DvP · projection", cashLeg: proceeds, positionLeg: -notional };
+    } else {
+      return NextResponse.json({ error: "Unknown settlement kind." }, { status: 404 });
+    }
+    return NextResponse.json({ view, record });
+  }
+
   try {
     let record;
     switch (params.kind) {

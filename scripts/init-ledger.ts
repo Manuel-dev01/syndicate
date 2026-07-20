@@ -59,12 +59,21 @@ async function main() {
   );
 
   // Per-lender positions (40 / 35 / 25 % of a $480M facility) — signatories lender + agentBank.
+  // Seed the facility MID-LIFE so the demo opens on a real, in-flight deal (not an empty $0 facility):
+  // 65% drawn with ~90 days of accrued interest at 8.50% ACT/360. Each lender's cash is its remaining
+  // UNDRAWN capacity (so further drawdowns can fund), and the borrower holds the drawn proceeds.
+  const DRAWN_PCT = 0.65;
+  const ACCRUAL = (0.085 * 90) / 360; // 90d at 850bps ACT/360 on the drawn balance
   const lenders: [string, number][] = [
     [p.lenderA, 192_000_000],
     [p.lenderB, 168_000_000],
     [p.lenderC, 120_000_000],
   ];
+  let totalDrawn = 0;
   for (const [lender, commitment] of lenders) {
+    const drawn = Math.round(commitment * DRAWN_PCT);
+    const accrued = Math.round(drawn * ACCRUAL);
+    totalDrawn += drawn;
     await submitAndWait(
       [lender, p.agentBank],
       [
@@ -73,26 +82,32 @@ async function main() {
           lender,
           agentBank: p.agentBank,
           commitment: dec(commitment),
-          drawn: dec(0),
-          accruedInterest: dec(0),
+          drawn: dec(drawn),
+          accruedInterest: dec(accrued),
           currency: CURRENCY,
           interestRateBps: RATE_BPS,
           maturityDate: MATURITY,
         }),
       ],
     );
-    // Starting cash equal to the commitment — signatories agentBank (issuer) + lender.
+    // Remaining undrawn capacity as cash — signatories agentBank (issuer) + lender.
     await submitAndWait(
       [p.agentBank, lender],
       [
         createCommand(tid("Syndicate.Cash:Cash"), {
           issuer: p.agentBank,
           owner: lender,
-          amount: dec(commitment),
+          amount: dec(commitment - drawn),
         }),
       ],
     );
   }
+
+  // The borrower holds the drawn proceeds (so the borrower view shows the facility drawn to date).
+  await submitAndWait(
+    [p.agentBank, p.borrower],
+    [createCommand(tid("Syndicate.Cash:Cash"), { issuer: p.agentBank, owner: p.borrower, amount: dec(totalDrawn) })],
+  );
 
   // AgentAuthorization — the scoped, revocable grant that bounds the Co-Pilot. Signatory agentBank,
   // observer the agent (co-pilot) party.
