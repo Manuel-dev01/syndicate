@@ -30,25 +30,34 @@ async function contractsOf(party: string, suffix: string): Promise<Created[]> {
 
 export interface AssessResult {
   ok: boolean;
+  /** True ONLY for a genuine on-ledger covenant abort (the Daml assertMsg). False for any infra
+   * failure (config missing, unseeded monitor, timeout, auth) — so callers can tell a real ledger
+   * rejection from a blip and never present a network hiccup as "the ledger rejected this draw". */
+  breach: boolean;
   projected?: number;
   error?: string;
 }
 
-/** Exercise CovenantMonitor.AssessDrawdown as the co-pilot party. ok=false on a covenant abort,
- * with the Daml assertMsg in `error`. */
+// A genuine CovenantMonitor.AssessDrawdown abort surfaces (via damlErrorMessage) with the covenant
+// assertMsg; an infra failure (timeout "security-sensitive", OIDC/401/5xx, abort) does not.
+const isCovenantAbort = (e: unknown) =>
+  e instanceof LedgerError && /covenant|leverage|breach|cap|assert/i.test(e.message);
+
+/** Exercise CovenantMonitor.AssessDrawdown as the co-pilot party. Distinguishes a genuine covenant
+ * abort (ok=false, breach=true) from any infrastructure failure (ok=false, breach=false). */
 export async function assessDrawdown(amount: number): Promise<AssessResult> {
   const agent = agentParty();
   const ab = partyOf("agentBank");
-  if (!agent || !ab) return { ok: false, error: "co-pilot party not configured" };
+  if (!agent || !ab) return { ok: false, breach: false, error: "co-pilot party not configured" };
   const mon = (await contractsOf(ab, ":CovenantMonitor"))[0];
-  if (!mon) return { ok: false, error: "no CovenantMonitor on-ledger" };
+  if (!mon) return { ok: false, breach: false, error: "no CovenantMonitor on-ledger" };
   try {
     await withLedgerTimeout((s) =>
       submitForTree([agent], [exerciseCommand(mon.templateId, mon.contractId, "AssessDrawdown", { proposedDraw: dec(amount) })], { signal: s }),
     );
-    return { ok: true };
+    return { ok: true, breach: false };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, breach: isCovenantAbort(e), error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -58,13 +67,21 @@ export async function assessDrawdown(amount: number): Promise<AssessResult> {
 export async function settleDrawdown(amount: number): Promise<{ updateId?: string }> {
   const borrower = partyOf("borrower");
   const ab = partyOf("agentBank");
-  if (!borrower || !ab) throw new LedgerError("settlement parties not configured");
+  // Pre-commit failures throw a PLAIN Error (not LedgerError): the settle route treats only
+  // LedgerError as a "rejected — nothing moved" 400 and lets everything else fall back to the sim.
+  // Nothing has moved on-ledger at these points, so the sim fallback is safe (never break the demo).
+  if (!borrower || !ab) throw new Error("settlement parties not configured");
 
-  // 1. On-ledger covenant gate — a breach aborts here, before anything moves.
+  // 1. On-ledger covenant gate. A GENUINE covenant abort → LedgerError (→ 400, the ledger's own
+  // rejection). An infra failure (timeout, unseeded monitor, auth) → plain Error → sim fallback,
+  // never a phantom "the ledger rejected this draw".
   const assess = await assessDrawdown(amount);
-  if (!assess.ok) throw new LedgerError(assess.error ?? "covenant breach");
+  if (!assess.ok) {
+    if (assess.breach) throw new LedgerError(assess.error ?? "covenant breach");
+    throw new Error(assess.error ?? "covenant assessment unavailable");
+  }
 
-  // 2. Borrower requests the draw.
+  // 2. Borrower requests the draw (a DrawdownRequest is just a request — no cash/position moves).
   await withLedgerTimeout((s) =>
     submitForTree(
       [borrower],
@@ -80,7 +97,11 @@ export async function settleDrawdown(amount: number): Promise<{ updateId?: strin
     contractsOf(ab, ":LenderPosition"),
     contractsOf(ab, ":Cash"),
   ]);
-  if (!req[0] || !fac[0]) throw new LedgerError("could not resolve drawdown contracts on-ledger");
+  // Correlate to THE request we just created (this facility + this amount), not an arbitrary [0]:
+  // a stale/orphaned request from a prior failed settle would otherwise settle the wrong amount.
+  const fid = facilityId();
+  const drawReq = req.find((r) => r.arg.facilityId === fid && r.arg.amount === dec(amount)) ?? req[0];
+  if (!drawReq || !fac[0]) throw new Error("could not resolve drawdown contracts on-ledger");
   // Daml tuples (ContractId LenderPosition, ContractId Cash) encode as {_1, _2} objects.
   const fundings = positions
     .map((p) => {
@@ -88,10 +109,19 @@ export async function settleDrawdown(amount: number): Promise<{ updateId?: strin
       return c ? { _1: p.contractId, _2: c.contractId } : null;
     })
     .filter((f): f is { _1: string; _2: string } => f !== null);
-  if (!fundings.length) throw new LedgerError("no fundable lender positions on-ledger");
+  if (!fundings.length) throw new Error("no fundable lender positions on-ledger");
 
-  const res = await withLedgerTimeout((s) =>
-    submitForTree([ab], [exerciseCommand(req[0].templateId, req[0].contractId, "SettleDrawdown", { facilityCid: fac[0].contractId, fundings })], { signal: s }),
-  );
+  // The settlement itself moves money. If it fails here (contention, timeout, auth) the ledger state
+  // is uncertain, so we must NOT fall back to the sim and re-apply the draw — surface a LedgerError
+  // (→ 400 "nothing moved") rather than risk a double count divergent from the ledger.
+  let res;
+  try {
+    res = await withLedgerTimeout((s) =>
+      submitForTree([ab], [exerciseCommand(drawReq.templateId, drawReq.contractId, "SettleDrawdown", { facilityCid: fac[0].contractId, fundings })], { signal: s }),
+    );
+  } catch (e) {
+    if (e instanceof LedgerError) throw e; // a real ledger rejection — surface as-is
+    throw new LedgerError("drawdown settlement did not confirm on-ledger — nothing moved");
+  }
   return { updateId: res.updateId };
 }

@@ -106,6 +106,13 @@ export async function devnetView(role: Role): Promise<FacilityView> {
   const positions = byTemplate(evs, ":LenderPosition");
   const monitor = byTemplate(evs, ":CovenantMonitor")[0];
   const cashEvts = byTemplate(evs, ":Cash");
+
+  // A properly-seeded party always sees at least its own Facility/LenderPosition. An empty result
+  // means real mode is misconfigured or the ledger is unreachable — THROW so the caller falls back
+  // to the sim, rather than rendering a hollow all-zero "facility" that masks the failure.
+  if (positions.length === 0 && byTemplate(evs, ":Facility").length === 0) {
+    throw new Error("empty active-contract set — real ledger unseeded/unreachable; fall back to sim");
+  }
   const bps = num(positions[0]?.arg.interestRateBps ?? 850);
 
   const covenants = COVENANTS.map((c) =>

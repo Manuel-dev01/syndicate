@@ -18,6 +18,10 @@ import { assessDrawdown } from "@/lib/ledgerSettle";
 async function onLedgerAssessment(s: LedgerStore, draw: number): Promise<Proposal | null> {
   try {
     const r = await assessDrawdown(draw);
+    // Only a GENUINE covenant abort is an on-ledger verdict. An infra failure (timeout, unseeded
+    // monitor, auth) returns null so the caller falls back to the deterministic guardrail / DeepSeek
+    // — never present a network blip as "the Canton ledger REJECTED this draw".
+    if (!r.ok && !r.breach) return null;
     const projected = Math.round(projectedLeverage(s.financials.totalDebt, s.financials.ebitda, draw) * 100) / 100;
     const breaches = !r.ok;
     return {
@@ -177,9 +181,12 @@ export async function POST(req: Request) {
   if (!apiKey) return NextResponse.json(scripted(key, s, draw));
 
   // Scope the LLM's inputs to the role's on-ledger visibility. Only the agent bank / borrower may
-  // reason over the raw private financials; a lender view gets covenant ratios only.
+  // reason over the raw private financials; a lender view gets covenant ratios only. And a lender's
+  // position is its OWN, need-to-know slice: only send it for that lender. The borrower (and the
+  // agent bank, which reasons facility-wide) must NOT receive any individual lender's slice — feeding
+  // one lender's position into the borrower's reasoning would breach the partition (principle #1).
   const entitled = roleKey === "agentBank" || roleKey === "borrower";
-  const pos = s.lenders.find((l) => l.role === roleKey)?.position ?? s.lenders[0].position;
+  const ownPos = s.lenders.find((l) => l.role === roleKey)?.position;
 
   const system =
     "You are the Agent-Bank Co-Pilot for a confidential syndicated loan facility settled on the Canton Network. " +
@@ -196,7 +203,7 @@ export async function POST(req: Request) {
     ask: STAGE_ASK[key],
     proposedDrawUsd: key === "drawdown" ? draw : undefined,
     leverageCap: LEVERAGE_CAP,
-    lenderPosition: { holdPct: pos.holdPct, committedUsd: pos.commitment, drawnUsd: pos.drawn },
+    lenderPosition: ownPos ? { holdPct: ownPos.holdPct, committedUsd: ownPos.commitment, drawnUsd: ownPos.drawn } : undefined,
     covenants: s.covenants,
     borrowerPrivate: entitled ? fin : "REDACTED — not visible to this role",
     rules: "Both legs of any settlement move in one Daml transaction or neither does. Recompute leverage as (totalDebt + draw)/EBITDA.",
