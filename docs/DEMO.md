@@ -97,8 +97,8 @@ DevNet right now.
 
 | View as | Sees | Can settle? |
 |---|---|---|
-| **Agent Bank** | Whole facility: full loan tape (all 6 lenders) + private borrower financials | Yes — facility-wide |
-| **Lender A / B / C** | Only its own slice + sealed placeholders + covenant ratios | Yes — its own slice; secondary trades |
+| **Agent Bank** | Whole facility: full loan tape (all 3 lenders) + private borrower financials | Yes — facility-wide |
+| **Lender A / B / C** | Only its own slice + sealed placeholders + covenant ratios | Yes — its own slice; secondary market |
 | **Borrower** | Facility terms + aggregate drawn/undrawn + its own financials; **no** per-lender identities | No — requests only; the agent bank authorizes |
 
 ---

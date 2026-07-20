@@ -9,9 +9,10 @@ settlement risk and reconciliation breaks. An LLM **Agent-Bank Co-Pilot** monito
 private borrower data and sequences settlement, constrained at all times by on-ledger Daml
 authorization.
 
-> **Status:** Daml model green (privacy + atomicity + covenant guardrail); real contracts **live on
-> Canton DevNet**; product deployed at **https://syndicate-delta.vercel.app**.
-> The full demo runs locally with **no configuration**.
+> **Status:** Live on **Canton DevNet** — the deployed product **reads *and* writes** real on-ledger
+> contracts (package `syndicatev3` v0.3.0). Daml model green (privacy + atomicity + covenant
+> guardrail, 14 Script tests). Product at **https://syndicate-delta.vercel.app**; the offline
+> `npm run dev` demo **mirrors the same 3-lender facility** with **no configuration**.
 
 ---
 
@@ -56,8 +57,13 @@ See [docs/PRIVACY-MODEL.md](docs/PRIVACY-MODEL.md) for the written-out argument.
 
 ## Quickstart — run the demo in 2 minutes
 
-The product is the demo. It ships with an in-memory ledger typed to the Daml model, so **it runs with
-zero configuration**:
+**Drive it now — live on Canton DevNet:** **https://syndicate-delta.vercel.app** → *Enter the
+product* (`/app`). This runs in real-ledger mode: each role's view is read from the ledger, a drawdown
+settles as a **real Canton transaction**, and a breaching draw is **rejected by the ledger**.
+
+**Or run it locally — zero configuration.** The offline build ships with an in-memory ledger typed to
+the Daml model that **mirrors the exact same 3-lender facility** as the live URL, so it runs with no
+setup:
 
 ```bash
 git clone <this-repo> && cd syndicate
@@ -65,16 +71,17 @@ cd web && npm install && npm run dev
 # open http://localhost:3000  →  click "Enter the product"  (/app)
 ```
 
-That's the whole demo — role-switcher, atomic settlement, the covenant-breach agent, and the
-confidential secondary trade all work offline.
+Same deal, same numbers — role-switcher, atomic settlement, the covenant-breach agent, and the
+confidential secondary market all work offline (the live URL additionally settles the drawdown *on*
+Canton; see [What's real vs. simulated](#whats-real-vs-simulated)).
 
-**Optional — light up the two "live" signals:** copy [`.env.example`](.env.example) to `web/.env.local`
-and set:
+**Optional — light up the two "live" signals locally:** copy [`.env.example`](.env.example) to
+`web/.env.local` and set:
 - `DEEPSEEK_API_KEY` — the Agent-Bank Co-Pilot reasons with a real LLM (rail shows **live · deepseek**);
   without it, a scripted fallback still computes the real covenant projection, so the breach beat is
   identical.
 - `DEVNET_*` — the green **Live on Canton DevNet** banner reads the real validator; without it the
-  banner self-hides.
+  banner self-hides. (Full real-ledger mode needs `LEDGER_MODE=real` + party ids — see `.env.example`.)
 
 Then walk it beat-by-beat with **[docs/DEMO.md](docs/DEMO.md)**.
 
@@ -83,17 +90,20 @@ Then walk it beat-by-beat with **[docs/DEMO.md](docs/DEMO.md)**.
 ## The demo path
 
 Open `/app` and use the **View as** switcher (top-right). It re-renders the *same* $480M facility from
-each party's point of view — the partition is real and **enforced server-side**, not hidden on screen.
+each party's point of view — **the partition is enforced by the ledger** (a lender's on-ledger query
+returns only its own position; offline, the same partition is enforced server-side).
 
 | View as | Sees | Can settle? |
 |---|---|---|
-| **Agent Bank** | Whole facility: full loan tape (all 6 lenders) + private borrower financials | Yes — facility-wide |
-| **Lender A / B / C** | Only its own slice + sealed placeholders + covenant ratios | Yes — its own slice; secondary trades |
+| **Agent Bank** | Whole facility: full loan tape (all 3 lenders) + private borrower financials | Yes — facility-wide |
+| **Lender A / B / C** | Only its own slice + sealed placeholders + covenant ratios | Yes — its own slice; secondary market |
 | **Borrower** | Facility terms + aggregate + its own financials; **no** per-lender identities | No — requests only |
 
-The five beats — prove the partition → drawdown settles atomically → the agent catches a covenant
-breach and the ledger blocks it → confidential secondary trade → live-on-DevNet proof — are written
-out click-by-click in **[docs/DEMO.md](docs/DEMO.md)**.
+The facility is a **3-lender, $480M** deal seeded mid-life (~65% drawn): Meridian Capital (40%),
+Brightwater Credit (35%), Halton Park Capital (25%). The live URL and `npm run dev` show the identical
+deal. The five beats — prove the partition → drawdown settles atomically (on Canton) → the agent
+catches a covenant breach and the ledger blocks it → confidential secondary market → live-on-DevNet
+proof — are written out click-by-click in **[docs/DEMO.md](docs/DEMO.md)**.
 
 ---
 
@@ -106,6 +116,11 @@ out click-by-click in **[docs/DEMO.md](docs/DEMO.md)**.
 4. **Repayment** — borrower repays; cash returns to lenders; positions update atomically.
 5. **Secondary trade** — Lender A sells a slice to Lender B via DvP; price and counterparties stay
    confidential from everyone else; position + cash settle atomically.
+
+All five are modeled in Daml and proven atomic in the Script suite. On the **live URL**, the
+**drawdown settles on Canton** (covenant-gated, both legs in one real transaction) and interest /
+repayment / secondary are shown as clearly-labeled projections against the real facility; the
+**offline sim** settles all five in-memory. See [What's real vs. simulated](#whats-real-vs-simulated).
 
 Plus the **Agent-Bank Co-Pilot**, which catches a covenant breach using real reasoning over private
 borrower data — and can execute only what its Daml party is authorized to.
@@ -150,26 +165,37 @@ can skip the `source` step.
 
 ## Architecture
 
+The same routes serve **two interchangeable back ends** behind one interface — the real Canton ledger
+or an in-memory sim — chosen per request by `ledgerMode.isRealLedger()`, with a graceful fallback so
+the demo never breaks:
+
 ```
-Browser (Next.js, role-switcher)
-   │  TanStack Query
-   ▼
-/api/facility   /api/settle/[kind]   /api/copilot            /api/devnet
-   │  viewAs(role)   │ atomic          │ DeepSeek + guardrail   │ OIDC → JSON Ledger API v2
-   ▼  (server)       ▼  mutation       ▼  (server-side)         ▼  (server-side)
-web/lib/store.ts (in-memory ledger, typed to the Daml model)   Canton DevNet validator (live)
-   ▲                                                              ▲
-   └──────────── same view/settlement interfaces ────────────────┘
-                (swaps to the JSON Ledger API on DevNet, no UI change)
+Browser (Next.js, role-switcher) ── TanStack Query ──▶ /api/{facility, settle/[kind], copilot, devnet}
+                                                              │
+                    isRealLedger()?  ┌───────────────────────┴───────────────────────┐
+                              REAL   ▼                                          SIM   ▼
+              web/lib/ledgerClient.ts (JSON Ledger API v2, OIDC)      web/lib/store.ts (in-memory,
+                 · devnetView.ts  — reads active-contracts AS the        typed to the Daml shapes)
+                   role's party → partition enforced by Canton         · privacy.ts (viewAs) — same
+                 · ledgerSettle.ts — drawdown: covenant gate +            partition, server-side
+                   pro-rata fund, one atomic on-ledger commit          · guardrails.ts — covenant truth
+                 · apiGuard.ts — origin + rate-limit on writes
+                              │                                                        │
+                              ▼                                                        ▼
+                   Canton DevNet validator (live)                       (any real-mode failure ─┐
+                              └──────────────── same FacilityView / SettlementRecord ───────────┘ falls back)
 ```
 
-The privacy partition is enforced **server-side** in `web/lib/privacy.ts` (`viewAs(role)`): a
-lender-role API payload carries only that lender's slice — no other-lender amounts, no borrower
-financials. The Agent-Bank Co-Pilot (`web/app/api/copilot/route.ts`) emits a **typed proposal**;
-`web/lib/guardrails.ts` validates it and recomputes covenant truth, overriding the model if it
-disagrees — the same guarantee the Daml `CovenantMonitor` enforces on-ledger.
+- **Privacy** is enforced by the *ledger* in real mode (`devnetView.ts` queries active-contracts as
+  the role's party, so a lender only ever receives its own `LenderPosition`), and by `privacy.ts`
+  (`viewAs`) offline — same guarantee, same payloads.
+- **The Agent-Bank Co-Pilot** (`web/app/api/copilot/route.ts`) emits a **typed proposal**;
+  `guardrails.ts` recomputes covenant truth and overrides the model if it disagrees — and in real
+  mode the verdict is the ledger's own (`CovenantMonitor.AssessDrawdown`), badged *verified · on
+  Canton*.
+- All real-ledger reads/writes are scoped to the current `DAML_PACKAGE_ID`.
 
-Full rationale, the Canton/Daml decisions, and the DevNet runbook:
+Full rationale, the real-ledger data path, the Canton/Daml decisions, and the DevNet runbook:
 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
@@ -203,9 +229,15 @@ syndicate/
 │   └── Tests/               # multi-party Daml Script tests (privacy, atomicity, covenant block)
 ├── web/                     # Next.js product — the role-switcher demo (this is what you run)
 │   ├── app/                 #   /(landing) + /app (deal-spine) + /api/{facility,settle,copilot,devnet}
-│   └── lib/                 #   store.ts (sim ledger), privacy.ts (viewAs), guardrails.ts, api.ts
+│   └── lib/
+│       ├── store.ts privacy.ts guardrails.ts     #   the in-memory sim back end (offline)
+│       ├── ledgerClient.ts devnetView.ts         #   the real-ledger back end: JSON Ledger API v2 +
+│       ├── ledgerSettle.ts ledgerMode.ts         #     on-ledger reads/writes, gated by isRealLedger()
+│       ├── apiGuard.ts                            #   origin + rate-limit + optional secret on writes
+│       └── api.ts ledger-model.ts                 #   client-safe fetchers + shared types
 ├── agent/                   # design-reference stub for a standalone co-pilot process (live one is in web/)
-├── scripts/                 # DevNet deploy + JSON Ledger API v2 seeding (allocate, init, verify, deploy)
+├── scripts/                 # JSON Ledger API v2 tooling: allocate-parties · init-ledger · upload-dar ·
+│                            #   reset-devnet · verify-{covenant,settle,privacy} · deploy-{shared,devnet}.sh
 ├── docs/                    # ARCHITECTURE.md · PRIVACY-MODEL.md · DEMO.md
 ├── .env.example             # every environment variable, documented
 └── README.md                # you are here
@@ -215,12 +247,17 @@ syndicate/
 
 ## Live deployment
 
-**Live on Canton DevNet.** The LF-2 DAR is uploaded to the hackathon's shared Canton DevNet validator
-and **real contracts are running on-ledger** — created and queried over the JSON Ledger API v2
-(`https://ledger-api.validator.devnet.sandbox.fivenorth.io/v2/*`, OIDC auth). Reproduce on the shared
-validator with `bash scripts/deploy-shared.sh`, or on a self-hosted sponsored node with
-`bash scripts/deploy-devnet.sh` (both read config from `.env`; see the runbook in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#devnet-deployment-runbook)).
+**Live on Canton DevNet.** The LF-2 DAR (`syndicatev3` v0.3.0) is uploaded to the hackathon's shared
+Canton DevNet validator, the full facility is seeded, and the **deployed product reads *and* writes**
+it over the JSON Ledger API v2 (`https://ledger-api.validator.devnet.sandbox.fivenorth.io/v2/*`, OIDC
+auth) — a drawdown is a real on-ledger transaction and a breaching draw is rejected by the ledger.
+
+Reproduce on the shared validator with `bash scripts/deploy-shared.sh` (upload DAR → allocate + grant
+parties → seed → verify the partition); reset and re-seed a pristine facility with
+`scripts/reset-devnet.ts` then `scripts/init-ledger.ts`; and prove the on-ledger behavior with the
+`scripts/verify-{covenant,settle,privacy}.ts` checks (covenant abort · atomic settle · per-role
+privacy). All read config from `.env`; see the runbook in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#devnet-deployment-runbook).
 
 **Frontend:** https://syndicate-delta.vercel.app — the landing page + the deal-spine product (`/app`).
 

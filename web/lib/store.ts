@@ -24,8 +24,8 @@ export const NORMAL_DRAW = 4 * M;
 export const STRESS_DRAW = 150 * M;
 export const FACILITY_AMORT = 12 * M;
 
-// One lender's slot. `role` is set for the three lenders the demo lets you view as (A/B/C); the
-// remaining members stay sealed to everyone but themselves and the agent bank.
+// One lender's slot. All three syndicate lenders (A/B/C) are viewable via the role-switcher; from
+// any one lender's view the other two are sealed (Daml partition), and only the agent bank sees all.
 export interface LenderSlot {
   role?: Role;
   position: LenderPosition;
@@ -34,7 +34,7 @@ export interface LenderSlot {
 
 export interface LedgerStore {
   facility: Facility;
-  lenders: LenderSlot[]; // 6 slots, summing to the facility commitment
+  lenders: LenderSlot[]; // 3 slots, summing to the facility commitment
   covenants: Covenant[];
   lifecycle: LifecycleStage[];
   financials: BorrowerFinancials; // PRIVATE — agent bank / borrower only
@@ -42,25 +42,23 @@ export interface LedgerStore {
   seq: number;
 }
 
-// hold% of each syndicate member; the three with a role are the viewable lenders A/B/C.
+// The three syndicate lenders A/B/C at 40 / 35 / 25% of the facility — MIRRORS the live DevNet seed
+// (scripts/init-ledger.ts) exactly, so the offline sim and the on-ledger deal are one and the same.
 const CAP_TABLE: { role?: Role; lender: string; holdPct: number }[] = [
   { role: "lenderA", lender: "Meridian Capital", holdPct: 40 },
-  { role: "lenderB", lender: "Brightwater Credit", holdPct: 25 },
-  { role: "lenderC", lender: "Halton Park Capital", holdPct: 15 },
-  { lender: "Grendel Structured Credit", holdPct: 10 },
-  { lender: "Ridgeline Partners", holdPct: 6 },
-  { lender: "Cormorant Asset Mgmt", holdPct: 4 },
+  { role: "lenderB", lender: "Brightwater Credit", holdPct: 35 },
+  { role: "lenderC", lender: "Halton Park Capital", holdPct: 25 },
 ];
 
 const TOTAL = 480 * M;
 const UTIL = 0.65; // 65% drawn across the facility
-const ACCRUED_FACILITY = 4.02 * M;
+const ACCRUAL_RATE = 0.02125; // 90d at 850bps ACT/360 on the drawn balance (matches init-ledger.ts)
 
 function seed(): LedgerStore {
   const lenders: LenderSlot[] = CAP_TABLE.map((c, i) => {
     const commitment = round((c.holdPct / 100) * TOTAL);
     const drawn = round(commitment * UTIL);
-    const accruedInterest = round((c.holdPct / 100) * ACCRUED_FACILITY);
+    const accruedInterest = round(drawn * ACCRUAL_RATE);
     return {
       role: c.role,
       position: { lender: c.lender, holdPct: c.holdPct, commitment, drawn, accruedInterest },
@@ -78,7 +76,7 @@ function seed(): LedgerStore {
       currency: "USD",
       totalCommitment: TOTAL,
       lenderCount: CAP_TABLE.length,
-      couponLabel: "SOFR + 575bps",
+      couponLabel: "SOFR + 850bps",
       seniority: "Senior secured",
       maturityDate: "2031-06-30",
       nextInterestDate: "2026-07-15",
@@ -91,7 +89,7 @@ function seed(): LedgerStore {
     ],
     lifecycle: [
       { key: "origination", label: "Origination", sub: "Mar 2024 · syndicated", done: true },
-      { key: "drawdown", label: "Drawdown", sub: "$4.0M · settled", done: true },
+      { key: "drawdown", label: "Drawdown", sub: "ready", done: false },
       { key: "interest", label: "Interest", sub: "Q2 accrual · ready", done: false },
       { key: "secondary", label: "Secondary", sub: "book open", done: false },
       { key: "repayment", label: "Repayment", sub: "amortizing", done: false },

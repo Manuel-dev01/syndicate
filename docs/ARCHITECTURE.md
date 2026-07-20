@@ -12,6 +12,7 @@ shaped this way, and how the demo maps onto the real ledger.
 - [Atomic settlement](#atomic-settlement)
 - [The agent & the guardrail](#the-agent--the-guardrail)
 - [Frontend & data layer](#frontend--data-layer)
+- [Real-ledger data path (DevNet mode)](#real-ledger-data-path-devnet-mode)
 - [Request flow](#request-flow)
 - [DevNet deployment runbook](#devnet-deployment-runbook)
 - [Toolchain & LF version](#toolchain--lf-version)
@@ -21,10 +22,11 @@ shaped this way, and how the demo maps onto the real ledger.
 
 ## System overview
 
-Syndicate is a Next.js product in front of a data layer that is **interface-compatible with the Daml
-model**. In the demo, that data layer is an in-memory ledger (`web/lib/store.ts`) typed to the exact
-Daml shapes; on DevNet, the same interfaces are served by the Canton JSON Ledger API. The UI, the
-privacy filter, and the settlement semantics do not change between the two.
+Syndicate is a Next.js product whose data layer is **interface-compatible with the Daml model**. The
+deployed app runs in **real-ledger mode** — the API routes read and write the Canton JSON Ledger API
+v2 — and falls back to an in-memory ledger (`web/lib/store.ts`, typed to the exact Daml shapes) when
+run offline or on any real-mode failure. The UI, the privacy partition, and the settlement semantics
+are identical across both back ends; the switch is `ledgerMode.isRealLedger()`, made per request.
 
 ```
                          ┌─────────────────────────────────────────────┐
@@ -35,20 +37,28 @@ privacy filter, and the settlement semantics do not change between the two.
         ┌────────────────┬───────────────┼─────────────────────┬──────────────────────┐
         ▼                ▼               ▼                     ▼                      ▼
  GET /api/facility  POST /api/settle  POST /api/copilot   GET /api/devnet         (static)
-   viewAs(role)       /[kind]           DeepSeek +           OIDC →
-   server-enforced    atomic legs       guardrails.ts        JSON Ledger API v2
-   partition          or SettlementErr  (server-side)        (server-side)
-        │                │               │                     │
-        └────────────────┴───────┬───────┘                     │
-                                 ▼                              ▼
-                web/lib/store.ts (in-memory ledger,   Canton DevNet validator (LIVE)
-                typed to the Daml model)               Facility · Cash · DrawdownRequest
-                                 ▲                              on-ledger
-                                 └──── same view/settlement interfaces ────┐
-                                       swap to the JSON Ledger API on DevNet │
-                                       with no UI change ◄────────────────────┘
+                        /[kind]         DeepSeek + guardrail  OIDC → live offset + contracts
+        │                │               │  (+ on-ledger AssessDrawdown in real mode)
+        └────────────────┴───────┬───────┘   [ writes guarded by apiGuard.ts ]
+                                 │
+                 isRealLedger()? ├───────────────── REAL ─────────────────┐
+                                 │                                         ▼
+                                 │              web/lib/ledgerClient.ts (JSON Ledger API v2, OIDC)
+                                 │                · devnetView.ts  — read active-contracts AS the
+                                 │                  role's party → partition enforced by Canton
+                                 │                · ledgerSettle.ts — drawdown: covenant gate +
+                                 │                  pro-rata fund, one atomic on-ledger commit
+                                 │                       │  (all reads/writes scoped by package id)
+                                 │                       ▼
+                                 │              Canton DevNet validator (LIVE)  ── syndicatev3 v0.3.0
+                                 │                                         │
+                                 └───────── SIM (fallback / offline) ──────┤ same FacilityView /
+                                                │                          │ SettlementRecord shapes
+                                                ▼                          │
+                                web/lib/store.ts (in-memory) · privacy.ts (viewAs) · guardrails.ts
+                                                                           ◄┘
 
-  Daml model (source of truth) ── daml/Syndicate/*.daml ── LF-2 DAR ── uploaded to DevNet
+  Daml model (source of truth) ── daml/Syndicate/*.daml ── LF-2 DAR (syndicatev3 v0.3.0) ── DevNet
   Facility · LenderPosition · Cash · Settlement · CovenantMonitor · AgentAuthorization
 ```
 
@@ -62,13 +72,14 @@ privacy filter, and the settlement semantics do not change between the two.
 | `daml/Syndicate/Tests/` | Multi-party Daml Script tests — privacy partition, atomic legs, secondary-trade confidentiality/rollback, covenant block. `daml test` runs all of them. |
 | `web/app/(landing) page.tsx` | Marketing front page (presentational) + the live-DevNet banner. |
 | `web/app/app/page.tsx` | The deal-spine product: role-switcher, lifecycle stages, atomic-settlement UI, the "what others can see" inspector, the co-pilot rail. |
-| `web/app/api/facility` | Returns the **role-scoped** `FacilityView` (`viewAs`). The partition lives here. |
-| `web/app/api/settle/[kind]` | Applies a settlement — both legs or neither; throws `SettlementError` before mutating. |
-| `web/app/api/copilot` | The Agent-Bank Co-Pilot: DeepSeek reasoning → typed proposal → `guardrails.ts` validation. |
-| `web/app/api/devnet` | Reads the real Canton DevNet validator (OIDC → JSON Ledger API v2) for the live-proof banner. |
-| `web/lib/store.ts` · `privacy.ts` · `guardrails.ts` | The sim ledger, the `viewAs(role)` partition, and the covenant guardrail. |
+| `web/app/api/facility` | The **role-scoped** `FacilityView`: real mode reads the ledger via `devnetView`, else `viewAs(sim)`. The partition lives here. |
+| `web/app/api/settle/[kind]` | A settlement — both legs or neither. Real mode: `drawdown` exercises the Daml choice on Canton (covenant-gated); other kinds are labeled projections. Sim: in-memory, throws `SettlementError` before mutating. Guarded by `apiGuard`. |
+| `web/app/api/copilot` | The Agent-Bank Co-Pilot: DeepSeek → typed proposal → `guardrails.ts`. In real mode also exercises `CovenantMonitor.AssessDrawdown` for the ledger's own verdict. Guarded by `apiGuard`. |
+| `web/app/api/devnet` | Reads the real Canton DevNet validator (OIDC → JSON Ledger API v2) for the live-proof banner (package-scoped). |
+| `web/lib/store.ts` · `privacy.ts` · `guardrails.ts` | **Sim back end**: the in-memory ledger, the `viewAs(role)` partition, and the covenant guardrail. |
+| `web/lib/ledgerClient.ts` · `devnetView.ts` · `ledgerSettle.ts` · `ledgerMode.ts` · `apiGuard.ts` | **Real back end**: the JSON Ledger API v2 client, ledger-read view mapper, on-ledger settlement, the `isRealLedger()` gate, and the write guard. See "Real-ledger data path". |
 | `agent/` | A design-reference **stub** for a standalone co-pilot process (own party, own credentials). The live co-pilot ships inside `web/`; this documents the separate-process boundary. |
-| `scripts/` | DevNet deploy + JSON Ledger API v2 seeding: `allocate-parties`, `init-ledger`, `upload-dar`, `verify-privacy`, `deploy-shared.sh`, `deploy-devnet.sh`. |
+| `scripts/` | JSON Ledger API v2 tooling: `allocate-parties`, `init-ledger`, `upload-dar`, `reset-devnet`, `verify-{covenant,settle,privacy}`, `deploy-shared.sh`, `deploy-devnet.sh`. |
 
 ---
 
@@ -179,8 +190,45 @@ signatory/observer boundary, reproduced in the response shape. The "what others 
 renders this as a visibility matrix.
 
 The data layer is deliberately interface-compatible with Canton: `store.ts` serves the same
-`FacilityView` / settlement shapes the JSON Ledger API returns, so the swap to DevNet is a data-layer
-change behind unchanged `web/app/api/*` and UI (`web/lib/ledger.ts` holds the JSON API base URL).
+`FacilityView` / settlement shapes the JSON Ledger API returns, so switching to the real ledger is a
+data-layer change behind unchanged `web/app/api/*` and UI.
+
+---
+
+## Real-ledger data path (DevNet mode)
+
+The same routes serve the sim **or** the real Canton ledger, chosen per request by
+`ledgerMode.isRealLedger()` — true only when `LEDGER_MODE=real` **and** the JSON API URL, package id,
+and party ids are configured. Any real-mode failure (timeout, unseeded contract, unreachable
+validator) is caught and the route **falls back to the sim**, so the deployed demo can never break.
+The server-only modules:
+
+- **`ledgerClient.ts`** — the JSON Ledger API v2 client. OIDC client-credentials token (cached; HS256
+  fallback for a local sandbox), `createCommand` / `exerciseCommand`, and
+  `submit-and-wait-for-transaction-tree` (so a choice's result and its abort are both observable — a
+  covenant breach surfaces as the Daml `assertMsg`). Every `Int`/`Numeric` is a **JSON string**; Daml
+  tuples encode as `{_1,_2}` and an `Optional` as the value-or-`null`. **Gotcha:** every fetch sets
+  `cache: "no-store"` — Next.js's fetch cache otherwise drops the `Authorization` header on the
+  `active-contracts` POST, which the validator rejects as `UNAUTHENTICATED`.
+- **`devnetView.ts`** — builds a role's `FacilityView` from the ledger by querying
+  `/v2/state/active-contracts` **as that role's party**. The partition is therefore enforced by the
+  **participant**, not app code: a lender's query returns only its own `LenderPosition` + `Cash`.
+  Throws on an empty result so the route falls back to the sim rather than render a hollow view.
+- **`ledgerSettle.ts`** — the on-ledger drawdown: exercise the covenant gate, then create/resolve the
+  `DrawdownRequest` and exercise `SettleDrawdown` (funding every lender pro-rata + the borrower's cash
+  in one commit). Correlates the request by facility + amount and **reuses** an existing one rather
+  than creating duplicates; a genuine covenant breach → `LedgerError` (→ 400 "nothing moved"), an
+  infra failure → plain error (→ sim fallback), a post-commit failure → `LedgerError` (never a sim
+  double-apply).
+- **`ledgerMode.ts`** — `isRealLedger()`, `partyOf(role)`, `agentParty()`, `facilityId()`.
+- **`apiGuard.ts`** — guards the write/LLM routes: same-origin enforcement + per-IP rate limiting +
+  an optional shared secret (`APP_WRITE_SECRET`). The public demo stays anonymously drivable; the
+  open internet can't drive real writes or exhaust the DeepSeek key.
+
+**Package-id scoping.** Because a new package (`syndicatev3` v0.3.0) coexists with older versions on
+the shared validator, every read/write filters active contracts by the current `DAML_PACKAGE_ID`, so
+the app only ever interprets its own package's contracts. `scripts/reset-devnet.ts` archives them for
+a clean re-seed.
 
 ---
 

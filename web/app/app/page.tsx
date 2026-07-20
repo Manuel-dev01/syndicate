@@ -29,7 +29,7 @@ const NORMAL_DRAW = 4_000_000;
 const STRESS_DRAW = 150_000_000;
 
 const STAGE_META: Record<string, { title: string; note: string }> = {
-  origination: { title: "The deal & the partition", note: "One facility, six lenders — each sees only its own slice." },
+  origination: { title: "The deal & the partition", note: "One facility, three lenders — each sees only its own slice." },
   drawdown: { title: "Fund a drawdown", note: "Borrower draws; lender cash moves atomically — unless a covenant blocks it." },
   interest: { title: "Distribute Q2 interest", note: "Cash in, accrual retired — one indivisible commit." },
   secondary: { title: "Trade on the secondary", note: "Lender-to-lender DvP; counterparty sealed." },
